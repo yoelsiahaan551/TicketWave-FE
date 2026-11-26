@@ -1,3 +1,62 @@
+export const ADMIN_MEDIA_ALLOWED_EXTENSIONS = ['jpeg', 'jpg', 'png', 'webp'];
+export const ADMIN_MEDIA_ALLOWED_MIME_TYPES = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
+export const ADMIN_MEDIA_ACCEPT = 'image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp';
+export const ADMIN_MEDIA_MAX_SIZE_MB = 5;
+export const ADMIN_MEDIA_MAX_SIZE_BYTES = ADMIN_MEDIA_MAX_SIZE_MB * 1024 * 1024;
+
+/**
+ * Validates an Admin media file against the Backend extension and size rules before preview or upload.
+ *
+ * @param {File|{ name?: string, type?: string, size?: number }|null|undefined} file
+ * @returns {{ valid: boolean, error: string|null }}
+ */
+export function validateAdminMediaFile(file) {
+  if (!file || !file.name) {
+    return { valid: false, error: 'File tidak ditemukan.' };
+  }
+
+  const fileName = String(file.name);
+  const lastDot = fileName.lastIndexOf('.');
+  const ext = lastDot >= 0 ? fileName.slice(lastDot + 1).toLowerCase() : '';
+  const mime = String(file.type || '').toLowerCase();
+
+  if (
+    !ADMIN_MEDIA_ALLOWED_EXTENSIONS.includes(ext) ||
+    (mime && !ADMIN_MEDIA_ALLOWED_MIME_TYPES.includes(mime))
+  ) {
+    return {
+      valid: false,
+      error: `Format file harus salah satu dari: ${ADMIN_MEDIA_ALLOWED_EXTENSIONS.join(', ')}`,
+    };
+  }
+
+  if (typeof file.size === 'number' && file.size <= 0) {
+    return { valid: false, error: 'File gambar kosong atau tidak valid.' };
+  }
+
+  if (typeof file.size === 'number' && file.size > ADMIN_MEDIA_MAX_SIZE_BYTES) {
+    return { valid: false, error: `Ukuran file maksimal ${ADMIN_MEDIA_MAX_SIZE_MB}MB` };
+  }
+
+  return { valid: true, error: null };
+}
+
+/**
+ * Revokes locally created blob object URLs without touching remote URLs.
+ *
+ * @param {string|null|undefined} url
+ */
+export function revokeBlobPreviewUrl(url) {
+  if (
+    typeof url === 'string' &&
+    url.startsWith('blob:') &&
+    typeof URL !== 'undefined' &&
+    typeof URL.revokeObjectURL === 'function'
+  ) {
+    URL.revokeObjectURL(url);
+  }
+}
+
 export function validateEventCreate(payload) {
   const length = (value, min, max) => typeof value === 'string' && value.trim().length >= min && value.trim().length <= max;
   if (!Number.isInteger(payload.agency_id) || payload.agency_id < 1 || !length(payload.name, 3, 200) || !length(payload.venue, 3, 200) || !length(payload.city, 2, 100)) {
@@ -24,11 +83,16 @@ export async function uploadPendingMedia(api, resource, entries) {
   const failures = [];
   for (const { field, file, onSaved } of entries) {
     if (!file) continue;
+    const check = validateAdminMediaFile(file);
+    if (!check.valid) {
+      failures.push(`${field}: ${check.error}`);
+      continue;
+    }
     try {
       const body = new FormData();
       body.append(field, file);
-      await api.upload(`${resource}/${field}`, body);
-      onSaved();
+      const res = await api.upload(`${resource}/${field}`, body);
+      onSaved(res);
     } catch (error) {
       failures.push(`${field}: ${error.message || 'Unggahan gagal.'}`);
     }

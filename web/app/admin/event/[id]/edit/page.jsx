@@ -6,7 +6,8 @@ import Link from "next/link";
 import Image from "next/image";
 import { ArrowLeft, Save, AlertCircle, CheckCircle2, Upload } from "lucide-react";
 import api from "@/app/lib/api";
-import { uploadPendingMedia } from "@/app/lib/adminForms";
+import { ADMIN_MEDIA_ACCEPT, uploadPendingMedia } from "@/app/lib/adminForms";
+import { useAdminMediaPreview } from "@/app/lib/useAdminMediaPreview";
 
 export default function EditEventPage() {
   const params = useParams();
@@ -18,16 +19,29 @@ export default function EditEventPage() {
   const [artistName, setArtistName] = useState("");
   const [eventDate, setEventDate] = useState("");
   const [eventTime, setEventTime] = useState("");
+  const [eventEndTime, setEventEndTime] = useState("");
   const [daysCount, setDaysCount] = useState(1);
   const [venue, setVenue] = useState("");
   const [city, setCity] = useState("");
   const [description, setDescription] = useState("");
   const [status, setStatus] = useState("draft");
 
-  const [posterFile, setPosterFile] = useState(null);
-  const [posterPreview, setPosterPreview] = useState(null);
-  const [bannerFile, setBannerFile] = useState(null);
-  const [bannerPreview, setBannerPreview] = useState(null);
+  const {
+    file: posterFile,
+    previewUrl: posterPreview,
+    error: posterError,
+    setRemotePreview: setPosterRemote,
+    clearPendingFile: clearPosterPending,
+    handleFileChange: handlePosterChange,
+  } = useAdminMediaPreview();
+  const {
+    file: bannerFile,
+    previewUrl: bannerPreview,
+    error: bannerError,
+    setRemotePreview: setBannerRemote,
+    clearPendingFile: clearBannerPending,
+    handleFileChange: handleBannerChange,
+  } = useAdminMediaPreview();
 
   const [loading, setLoading] = useState(true);
   const [loaded, setLoaded] = useState(false);
@@ -50,13 +64,14 @@ export default function EditEventPage() {
           setArtistName(ev.artist_name || "");
           setEventDate(ev.event_date || "");
           setEventTime(ev.event_time ? ev.event_time.slice(0, 5) : "");
+          setEventEndTime(ev.event_end_time ? ev.event_end_time.slice(0, 5) : "");
           setDaysCount(ev.days_count || 1);
           setVenue(ev.venue || "");
           setCity(ev.city || "");
           setDescription(ev.description || "");
           setStatus(ev.status || "draft");
-          if (ev.poster_url) setPosterPreview(ev.poster_url);
-          if (ev.banner_url) setBannerPreview(ev.banner_url);
+          setPosterRemote(ev.poster_url || null);
+          setBannerRemote(ev.banner_url || null);
         }
         setLoading(false);
       })
@@ -70,7 +85,7 @@ export default function EditEventPage() {
     return () => {
       ignore = true;
     };
-  }, [id]);
+  }, [id, setPosterRemote, setBannerRemote]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -91,6 +106,7 @@ export default function EditEventPage() {
       payload.artist_name = artistName.trim();
       if (eventDate) payload.event_date = eventDate;
       if (eventTime) payload.event_time = eventTime;
+      payload.event_end_time = eventEndTime ? eventEndTime : null;
     } else {
       payload.days_count = Number(daysCount);
     }
@@ -98,8 +114,16 @@ export default function EditEventPage() {
     try {
       await api.put(`/events/${id}`, payload);
       const failures = await uploadPendingMedia(api, `/events/${id}`, [
-        { field: "poster", file: posterFile, onSaved: () => setPosterFile(null) },
-        { field: "banner", file: bannerFile, onSaved: () => setBannerFile(null) },
+        {
+          field: "poster",
+          file: posterFile,
+          onSaved: (res) => clearPosterPending(res?.data?.poster_url),
+        },
+        {
+          field: "banner",
+          file: bannerFile,
+          onSaved: (res) => clearBannerPending(res?.data?.banner_url),
+        },
       ]);
       if (failures.length) {
         setError(`Data event sudah disimpan, tetapi unggahan gagal. ${failures.join(" ")}`);
@@ -208,7 +232,7 @@ export default function EditEventPage() {
                     />
                   </div>
 
-                  <div className="grid gap-4 sm:grid-cols-2">
+                  <div className="grid gap-4 sm:grid-cols-3">
                     <div>
                       <label className="mb-1.5 block text-xs font-medium text-slate-700 dark:text-slate-300">
                         Tanggal Event
@@ -222,12 +246,23 @@ export default function EditEventPage() {
                     </div>
                     <div>
                       <label className="mb-1.5 block text-xs font-medium text-slate-700 dark:text-slate-300">
-                        Jam Mulai
+                        Jam Mulai (WIB)
                       </label>
                       <input
                         type="time"
                         value={eventTime}
                         onChange={(e) => setEventTime(e.target.value)}
+                        className="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs text-slate-900 outline-none transition focus:border-slate-500 focus:ring-1 focus:ring-slate-400 dark:border-slate-700 dark:bg-slate-900 dark:text-white dark:focus:border-slate-400 dark:focus:ring-slate-400"
+                      />
+                    </div>
+                    <div>
+                      <label className="mb-1.5 block text-xs font-medium text-slate-700 dark:text-slate-300">
+                        Jam Selesai (WIB, opsional)
+                      </label>
+                      <input
+                        type="time"
+                        value={eventEndTime}
+                        onChange={(e) => setEventEndTime(e.target.value)}
                         className="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs text-slate-900 outline-none transition focus:border-slate-500 focus:ring-1 focus:ring-slate-400 dark:border-slate-700 dark:bg-slate-900 dark:text-white dark:focus:border-slate-400 dark:focus:ring-slate-400"
                       />
                     </div>
@@ -345,15 +380,15 @@ export default function EditEventPage() {
               <label className="block text-xs font-medium text-slate-700 dark:text-slate-300">
                 Poster Event (POST /events/{id}/poster)
               </label>
-              <label className="flex h-52 cursor-pointer flex-col items-center justify-center overflow-hidden rounded-xl border border-dashed border-slate-300 transition hover:border-slate-400 dark:border-slate-700 dark:hover:border-slate-500">
+              <label className="flex min-h-60 cursor-pointer flex-col items-center justify-center overflow-hidden rounded-xl border border-dashed border-slate-300 bg-slate-50/70 p-3 transition hover:border-slate-400 dark:border-slate-700 dark:bg-slate-800/40 dark:hover:border-slate-500">
                 {posterPreview ? (
                   <Image
-                    width={640}
-                    height={480}
+                    width={600}
+                    height={800}
                     unoptimized
                     src={posterPreview}
                     alt="Poster"
-                    className="h-full w-full object-cover"
+                    className="h-auto max-h-72 w-auto max-w-full rounded-lg object-contain"
                   />
                 ) : (
                   <>
@@ -368,17 +403,20 @@ export default function EditEventPage() {
                 )}
                 <input
                   type="file"
-                  accept="image/jpeg,image/png,image/webp"
+                  accept={ADMIN_MEDIA_ACCEPT}
                   className="hidden"
-                  onChange={(e) => {
-                    const f = e.target.files?.[0];
-                    if (f) {
-                      setPosterFile(f);
-                      setPosterPreview(URL.createObjectURL(f));
-                    }
-                  }}
+                  onChange={handlePosterChange}
                 />
               </label>
+              {posterError && (
+                <p
+                  role="alert"
+                  className="flex items-start gap-1.5 rounded-lg border border-rose-200 bg-rose-50 px-2.5 py-2 text-[11px] font-medium text-rose-700 dark:border-rose-900/60 dark:bg-rose-950/40 dark:text-rose-300"
+                >
+                  <AlertCircle size={13} className="mt-0.5 shrink-0" />
+                  <span>{posterError}</span>
+                </p>
+              )}
             </div>
 
             {/* Banner Upload Card */}
@@ -386,7 +424,7 @@ export default function EditEventPage() {
               <label className="block text-xs font-medium text-slate-700 dark:text-slate-300">
                 Banner Event (POST /events/{id}/banner)
               </label>
-              <label className="flex h-40 cursor-pointer flex-col items-center justify-center overflow-hidden rounded-xl border border-dashed border-slate-300 transition hover:border-slate-400 dark:border-slate-700 dark:hover:border-slate-500">
+              <label className="flex h-40 cursor-pointer flex-col items-center justify-center overflow-hidden rounded-xl border border-dashed border-slate-300 bg-slate-50/70 p-2 transition hover:border-slate-400 dark:border-slate-700 dark:bg-slate-800/40 dark:hover:border-slate-500">
                 {bannerPreview ? (
                   <Image
                     width={640}
@@ -394,7 +432,7 @@ export default function EditEventPage() {
                     unoptimized
                     src={bannerPreview}
                     alt="Banner"
-                    className="h-full w-full object-cover"
+                    className="h-auto max-h-36 w-auto max-w-full rounded-lg object-contain"
                   />
                 ) : (
                   <>
@@ -403,23 +441,26 @@ export default function EditEventPage() {
                       Klik untuk mengganti Banner
                     </span>
                     <span className="mt-0.5 text-[11px] text-slate-400">
-                      Rekomendasi rasio 16:9
+                      JPG, PNG, WEBP (maks. 5MB, rasio 16:9)
                     </span>
                   </>
                 )}
                 <input
                   type="file"
-                  accept="image/jpeg,image/png,image/webp"
+                  accept={ADMIN_MEDIA_ACCEPT}
                   className="hidden"
-                  onChange={(e) => {
-                    const f = e.target.files?.[0];
-                    if (f) {
-                      setBannerFile(f);
-                      setBannerPreview(URL.createObjectURL(f));
-                    }
-                  }}
+                  onChange={handleBannerChange}
                 />
               </label>
+              {bannerError && (
+                <p
+                  role="alert"
+                  className="flex items-start gap-1.5 rounded-lg border border-rose-200 bg-rose-50 px-2.5 py-2 text-[11px] font-medium text-rose-700 dark:border-rose-900/60 dark:bg-rose-950/40 dark:text-rose-300"
+                >
+                  <AlertCircle size={13} className="mt-0.5 shrink-0" />
+                  <span>{bannerError}</span>
+                </p>
+              )}
             </div>
           </div>
         </div>

@@ -19,14 +19,44 @@ async function appendMediaFile(
   fileUri: string,
   fallbackName: string
 ) {
-  const filename = fileUri.split('/').pop()?.split('?')[0] || fallbackName;
-  const match = /\.(\w+)$/.exec(filename);
-  const type = match ? `image/${match[1].toLowerCase() === 'jpg' ? 'jpeg' : match[1].toLowerCase()}` : 'image/jpeg';
+  const cleanFallback = fallbackName || `${fieldName}.jpg`;
+  const fallbackBase = cleanFallback.replace(/\.[^.]+$/, '') || fieldName;
+  const fallbackExt = cleanFallback.split('.').pop()?.toLowerCase() || 'jpg';
+
+  const extFromMime = (mime?: string | null): string | null => {
+    const lower = (mime || '').toLowerCase().split(';')[0].trim();
+    if (lower === 'image/png') return 'png';
+    if (lower === 'image/webp') return 'webp';
+    if (lower === 'image/jpeg' || lower === 'image/jpg') return 'jpg';
+    return null;
+  };
+
+  let filename = cleanFallback;
+  if (fileUri.startsWith('data:')) {
+    const mimeMatch = /^data:([^;,]+)/i.exec(fileUri);
+    const ext = extFromMime(mimeMatch?.[1]) || fallbackExt;
+    filename = `${fallbackBase}.${ext}`;
+  } else if (fileUri.startsWith('blob:')) {
+    filename = `${fallbackBase}.${fallbackExt}`;
+  } else {
+    const candidate = fileUri.split('/').pop()?.split('?')[0]?.split('#')[0] || '';
+    const extMatch = /\.([a-zA-Z0-9]+)$/.exec(candidate);
+    if (candidate && extMatch && ['jpg', 'jpeg', 'png', 'webp'].includes(extMatch[1].toLowerCase())) {
+      filename = candidate;
+    } else {
+      filename = `${fallbackBase}.${fallbackExt}`;
+    }
+  }
+
+  const resolvedExt = filename.split('.').pop()?.toLowerCase() || fallbackExt;
+  const type = `image/${resolvedExt === 'jpg' ? 'jpeg' : resolvedExt}`;
 
   if (Platform.OS === 'web' && typeof fetch === 'function') {
     const resp = await fetch(fileUri);
     const blob = await resp.blob();
-    formData.append(fieldName, blob, filename);
+    const blobExt = extFromMime(blob.type);
+    const finalName = blobExt ? `${fallbackBase}.${blobExt}` : filename;
+    formData.append(fieldName, blob, finalName);
   } else {
     formData.append(fieldName, { uri: fileUri, name: filename, type } as any);
   }
@@ -69,21 +99,59 @@ export async function createCheckout(payload: CheckoutPayload) {
     expired_at: string;
     tickets_preview: any[];
     total_tickets: number;
+    guest_access_token?: string;
   }>('/checkout', payload);
 }
 
-export async function fetchBookingDetail(bookingCode: string) {
-  return api.get<BookingDetailResponse>(`/checkout/${encodeURIComponent(bookingCode)}`);
+export async function fetchMyBookings() {
+  return api.get<{
+    bookings: BookingDetailResponse[];
+    total: number;
+  }>('/checkout/my-bookings', {}, { silent: true });
 }
 
-export async function cancelBooking(bookingCode: string) {
-  return api.post<{ booking: Booking }>(`/checkout/${encodeURIComponent(bookingCode)}/cancel`);
+export async function fetchBookingDetail(
+  bookingCode: string,
+  options?: { guestToken?: string | null; buyerEmail?: string | null; silent?: boolean }
+) {
+  const headers: Record<string, string> = {};
+  if (options?.guestToken?.trim()) {
+    headers['X-Guest-Token'] = options.guestToken.trim();
+  }
+  if (options?.buyerEmail?.trim()) {
+    headers['X-Buyer-Email'] = options.buyerEmail.trim();
+  }
+  return api.get<BookingDetailResponse>(
+    `/checkout/${encodeURIComponent(bookingCode)}`,
+    {},
+    {
+      silent: options?.silent ?? false,
+      ...(Object.keys(headers).length ? { headers } : {}),
+    }
+  );
 }
 
-export async function syncBookingPaymentStatus(bookingCode: string) {
+export async function cancelBooking(bookingCode: string, guestToken?: string | null) {
+  const headers: Record<string, string> = {};
+  if (guestToken?.trim()) {
+    headers['X-Guest-Token'] = guestToken.trim();
+  }
+  return api.post<{ booking: Booking }>(
+    `/checkout/${encodeURIComponent(bookingCode)}/cancel`,
+    {},
+    Object.keys(headers).length ? { headers } : {}
+  );
+}
+
+export async function syncBookingPaymentStatus(bookingCode: string, guestToken?: string | null) {
+  const headers: Record<string, string> = {};
+  if (guestToken?.trim()) {
+    headers['X-Guest-Token'] = guestToken.trim();
+  }
   return api.post<SyncPaymentStatusResponse>(
     `/checkout/${encodeURIComponent(bookingCode)}/sync-payment-status`,
-    {}
+    {},
+    Object.keys(headers).length ? { headers } : {}
   );
 }
 
@@ -93,6 +161,14 @@ export async function loginApi(email: string, password: string) {
     email,
     password,
   });
+}
+
+export async function logoutApi(refreshToken?: string | null) {
+  return api.post(
+    '/auth/logout',
+    refreshToken ? { refresh_token: refreshToken } : {},
+    { silent: true }
+  );
 }
 
 export async function registerApi(payload: {

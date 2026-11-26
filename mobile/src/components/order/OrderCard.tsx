@@ -5,7 +5,7 @@ import { useRouter } from 'expo-router';
 import { useAppTheme } from '../../context/ThemeContext';
 import { BookingDetailResponse } from '../../types';
 import { formatRupiah, formatTanggalSingkat } from '../../utils/formatters';
-import { getOfficialPaymentUrl } from '../../utils/payment';
+import { resolveOrderPaymentState } from '../../utils/payment';
 import { Badge } from '../common/Badge';
 
 interface OrderCardProps {
@@ -18,9 +18,9 @@ export function OrderCard({ item, onPayNow, onCancel }: OrderCardProps) {
   const router = useRouter();
   const { colors, brand } = useAppTheme();
 
-  const { booking, event, ticket_type } = item;
-  const isPending = booking.status === 'pending_payment';
-  const payUrl = getOfficialPaymentUrl(booking);
+  const { booking, event, ticket_type, tickets } = item;
+  const orderState = resolveOrderPaymentState(booking, event, tickets);
+  const payUrl = orderState.paymentUrl;
 
   const openOrderDetail = () => {
     router.push(`/order/${booking.booking_code}` as any);
@@ -52,8 +52,15 @@ export function OrderCard({ item, onPayNow, onCancel }: OrderCardProps) {
               {booking.booking_code}
             </Text>
           </View>
-          <Badge status={booking.status} />
+          <Badge label={orderState.label} variant={orderState.variant} />
         </View>
+
+        {orderState.description &&
+        ['expired', 'event_ended', 'sales_closed'].includes(orderState.code) ? (
+          <Text style={{ fontSize: 12, color: colors.textSecondary, marginTop: 6 }}>
+            {orderState.description}
+          </Text>
+        ) : null}
 
         {/* Main Info */}
         <View style={[styles.body, { borderTopColor: colors.border }]}>
@@ -109,7 +116,7 @@ export function OrderCard({ item, onPayNow, onCancel }: OrderCardProps) {
           <ChevronRight size={14} color="#FFFFFF" />
         </TouchableOpacity>
 
-        {isPending && payUrl && onPayNow && (
+        {orderState.canPay && payUrl && onPayNow && (
           <TouchableOpacity
             activeOpacity={0.8}
             onPress={() => onPayNow(payUrl)}
@@ -121,7 +128,7 @@ export function OrderCard({ item, onPayNow, onCancel }: OrderCardProps) {
           </TouchableOpacity>
         )}
 
-        {isPending && onCancel && (
+        {orderState.canCancel && onCancel && (
           <TouchableOpacity
             activeOpacity={0.8}
             onPress={() => onCancel(booking.booking_code)}

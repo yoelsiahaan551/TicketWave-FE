@@ -150,7 +150,12 @@ class APIClient {
         endpoint.startsWith('/auth/request-password-reset') ||
         endpoint.startsWith('/auth/reset-password');
 
-      if (response.status === 401 && !isAuthPublicEndpoint && requestSessionVersion === this.sessionVersion) {
+      if (
+        response.status === 401 &&
+        !isAuthPublicEndpoint &&
+        (token || this.getRefreshToken()) &&
+        requestSessionVersion === this.sessionVersion
+      ) {
         const refreshed = await this.refreshToken({ silent });
         if (refreshed) {
           const newToken = this.getAccessToken();
@@ -161,7 +166,7 @@ class APIClient {
           const { response: retryResponse, raw: retryRaw } = await fetchJSON(url, { ...config, headers: retryHeaders }, { endpoint, retry: false });
           const retryData = normalizeResponse(retryRaw);
           if (!retryResponse.ok || (retryData && retryData.success === false)) {
-            if (retryResponse.status === 401) {
+            if (retryResponse.status === 401 && token) {
               this.clearTokens();
             }
             const err = new Error(formatErrorMessage(retryData, retryResponse.status));
@@ -172,7 +177,7 @@ class APIClient {
             throw err;
           }
           return retryData;
-        } else if (!this.getRefreshToken()) {
+        } else if (token && !this.getRefreshToken()) {
           this.clearTokens();
         }
       }
@@ -547,8 +552,8 @@ class APIClient {
   }
 
   // Eksplisit sinkronisasi status pembayaran Sandbox/development (POST, bukan GET read-only)
-  async syncPaymentStatus(bookingCode) {
-    return this.post(`/checkout/${encodeURIComponent(bookingCode)}/sync-payment-status`, {});
+  async syncPaymentStatus(bookingCode, options = {}) {
+    return this.post(`/checkout/${encodeURIComponent(bookingCode)}/sync-payment-status`, {}, options);
   }
 
   // Health check endpoint (/health berada di root server, bukan /api/health)

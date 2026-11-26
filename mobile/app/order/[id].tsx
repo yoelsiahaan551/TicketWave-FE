@@ -37,26 +37,31 @@ import {
   fetchBookingDetail,
   syncBookingPaymentStatus,
 } from '../../src/api/endpoints';
-import { saveBookingEntry } from '../../src/utils/storage';
+import {
+  getGuestTokenForBooking,
+  saveBookingEntry,
+} from '../../src/utils/storage';
 import { BookingDetailResponse, TicketItem } from '../../src/types';
 import {
   formatEventSchedule,
   formatRupiah,
   formatWibDateTime,
   getStatusLabel,
-  getTicketDisplayStatus,
   isTicketQrEligible,
   normalizeUtcIso,
 } from '../../src/utils/formatters';
 import {
   canUserSyncBookingPayment,
-  getOfficialPaymentUrl,
+  getMobilePaymentReturnUrl,
   getPaymentMethodLabel,
   openMidtransPaymentBrowser,
+  resolveOrderPaymentState,
+  resolveTicketDisplayStatus,
 } from '../../src/utils/payment';
 import { Header } from '../../src/components/common/Header';
 import { Badge } from '../../src/components/common/Badge';
 import { Button } from '../../src/components/common/Button';
+import { Input } from '../../src/components/common/Input';
 import { QRCodeModal } from '../../src/components/ticket/QRCodeModal';
 import { Skeleton } from '../../src/components/common/Skeleton';
 
@@ -78,6 +83,13 @@ export default function OrderDetailScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [verificationMode, setVerificationMode] = useState<
+    null | 'login' | 'guest_email' | 'forbidden' | 'not_found'
+  >(null);
+  const [guestEmailInput, setGuestEmailInput] = useState('');
+  const [verifyingGuest, setVerifyingGuest] = useState(false);
+  const [guestVerifyError, setGuestVerifyError] = useState<string | null>(null);
+  const [hasGuestToken, setHasGuestToken] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [paymentFeedback, setPaymentFeedback] =
@@ -96,6 +108,7 @@ export default function OrderDetailScreen() {
     }
     if (
       fromPayment === 'opened' ||
+      fromPayment === 'returned' ||
       fromPayment === 'dismissed' ||
       fromPayment === 'cancelled'
     ) {
@@ -122,12 +135,13 @@ export default function OrderDetailScreen() {
   const activeFeedback = paymentFeedback ?? initialFromPaymentFeedback;
 
   const persistBookingFromResponse = useCallback(
-    async (data: BookingDetailResponse) => {
+    async (data: BookingDetailResponse, existingToken?: string | null) => {
       const booking = data.booking;
-      const officialUrl = getOfficialPaymentUrl(booking);
+      const nextToken = data.guest_access_token || existingToken || null;
+      if (nextToken) setHasGuestToken(true);
       await saveBookingEntry({
         booking_code: booking.booking_code,
-        payment_url: officialUrl,
+        guest_token: nextToken,
         recipient_email: booking.recipient_email || booking.buyer_email,
         event_name: data.event?.name,
       });
@@ -139,15 +153,28 @@ export default function OrderDetailScreen() {
   const refreshOrder = useCallback(async (): Promise<BookingDetailResponse | null> => {
     if (!id) return null;
     try {
-      const res = await fetchBookingDetail(id);
+      const guestToken = await getGuestTokenForBooking(id);
+      if (guestToken) setHasGuestToken(true);
+      const res = await fetchBookingDetail(id, { guestToken, silent: true });
       if (res.success && res.data?.booking) {
         setDetail(res.data);
+        setVerificationMode(null);
         setError(null);
-        await persistBookingFromResponse(res.data);
+        await persistBookingFromResponse(res.data, guestToken);
         return res.data;
       }
       return null;
     } catch (err: any) {
+      const reqMode = err?.data?.errors?.requires_verification;
+      if (err?.status === 404) {
+        setVerificationMode('not_found');
+      } else if (reqMode === 'login') {
+        setVerificationMode('login');
+      } else if (reqMode === 'guest_email') {
+        setVerificationMode('guest_email');
+      } else if (err?.status === 403) {
+        setVerificationMode('forbidden');
+      }
       setError(err?.message || 'Gagal memuat detail pesanan.');
       return null;
     } finally {
@@ -157,33 +184,81 @@ export default function OrderDetailScreen() {
 
   useEffect(() => {
     let ignore = false;
-    if (!id || (isAuthenticated && isOfficer)) return;
+    if (!id || authLoading || (isAuthenticated && isOfficer)) return;
 
-    fetchBookingDetail(id)
-      .then(async (res) => {
+    (async () => {
+      try {
+        const guestToken = await getGuestTokenForBooking(id);
+        if (!ignore && guestToken) setHasGuestToken(true);
+        const res = await fetchBookingDetail(id, { guestToken, silent: true });
         if (!ignore && res.success && res.data?.booking) {
           setDetail(res.data);
+          setVerificationMode(null);
           setError(null);
-          await persistBookingFromResponse(res.data);
+          await persistBookingFromResponse(res.data, guestToken);
         }
-      })
-      .catch((err: any) => {
+      } catch (err: any) {
         if (!ignore) {
+          const reqMode = err?.data?.errors?.requires_verification;
+          if (err?.status === 404) {
+            setVerificationMode('not_found');
+          } else if (reqMode === 'login') {
+            setVerificationMode('login');
+          } else if (reqMode === 'guest_email') {
+            setVerificationMode('guest_email');
+          } else if (err?.status === 403) {
+            setVerificationMode('forbidden');
+          }
           setError(err?.message || 'Gagal memuat detail pesanan.');
         }
-      })
-      .finally(() => {
+      } finally {
         if (!ignore) {
           hasLoadedOnceRef.current = true;
           setLoading(false);
           setRefreshing(false);
         }
-      });
+      }
+    })();
 
     return () => {
       ignore = true;
     };
-  }, [id, isAuthenticated, isOfficer, persistBookingFromResponse]);
+  }, [id, authLoading, isAuthenticated, isOfficer, persistBookingFromResponse]);
+
+  useEffect(() => {
+    if (authLoading || !id || (isAuthenticated && isOfficer)) return;
+    if (verificationMode === 'login') {
+      router.replace({
+        pathname: '/login',
+        params: { next: `/order/${encodeURIComponent(String(id))}` },
+      } as any);
+    }
+  }, [authLoading, id, isAuthenticated, isOfficer, router, verificationMode]);
+
+  const handleGuestVerifySubmit = async () => {
+    const email = guestEmailInput.trim();
+    if (!email || !id) {
+      setGuestVerifyError('Masukkan alamat email pembeli terlebih dahulu.');
+      return;
+    }
+    setVerifyingGuest(true);
+    setGuestVerifyError(null);
+    try {
+      const res = await fetchBookingDetail(id, { buyerEmail: email, silent: true });
+      if (res.success && res.data?.booking) {
+        setDetail(res.data);
+        setVerificationMode(null);
+        setError(null);
+        await persistBookingFromResponse(res.data);
+      } else {
+        setGuestVerifyError(res.message || 'Verifikasi email gagal.');
+      }
+    } catch (err: any) {
+      setGuestVerifyError(err?.message || 'Email pembeli tidak cocok dengan pesanan ini.');
+    } finally {
+      setVerifyingGuest(false);
+    }
+  };
 
   useFocusEffect(
     useCallback(() => {
@@ -268,7 +343,8 @@ export default function OrderDetailScreen() {
     if (!detail?.booking?.booking_code) return;
     setCancelling(true);
     try {
-      await cancelBooking(detail.booking.booking_code);
+      const guestToken = await getGuestTokenForBooking(detail.booking.booking_code);
+      await cancelBooking(detail.booking.booking_code, guestToken);
       await refreshOrder();
       setPaymentFeedback({
         type: 'info',
@@ -313,7 +389,13 @@ export default function OrderDetailScreen() {
   };
 
   const handlePayNow = async () => {
-    const officialUrl = getOfficialPaymentUrl(detail?.booking);
+    const orderState = resolveOrderPaymentState(
+      detail?.booking,
+      detail?.event,
+      detail?.tickets,
+      nowMs
+    );
+    const officialUrl = orderState.canPay ? orderState.paymentUrl : null;
     if (!officialUrl) {
       setPaymentFeedback({
         type: 'error',
@@ -322,13 +404,21 @@ export default function OrderDetailScreen() {
       return;
     }
 
-    const result = await openMidtransPaymentBrowser(officialUrl);
+    const result = await openMidtransPaymentBrowser(
+      officialUrl,
+      getMobilePaymentReturnUrl()
+    );
     if (result.status === 'error') {
       setPaymentFeedback({
         type: 'error',
         text:
           result.message ||
           'Gagal membuka browser pembayaran Midtrans Sandbox.',
+      });
+    } else if (result.status === 'returned') {
+      setPaymentFeedback({
+        type: 'info',
+        text: 'Anda kembali dari Midtrans. Tekan "Periksa Status Pembayaran" untuk memverifikasi status resmi dari server.',
       });
     } else {
       setPaymentFeedback({
@@ -351,7 +441,8 @@ export default function OrderDetailScreen() {
     setPaymentFeedback(null);
 
     try {
-      await syncBookingPaymentStatus(detail.booking.booking_code);
+      const guestToken = await getGuestTokenForBooking(detail.booking.booking_code);
+      await syncBookingPaymentStatus(detail.booking.booking_code, guestToken);
       const updated = await refreshOrder();
       const nextStatus = updated?.booking?.status;
 
@@ -467,11 +558,87 @@ export default function OrderDetailScreen() {
     );
   }
 
+  if (verificationMode === 'guest_email') {
+    return (
+      <View style={[styles.centerWrap, { backgroundColor: colors.background }]}>
+        <Header showBack title="Verifikasi Pesanan Guest" />
+        <View
+          style={{
+            width: 56,
+            height: 56,
+            borderRadius: 16,
+            backgroundColor: brand.primarySoft,
+            alignItems: 'center',
+            justifyContent: 'center',
+            marginBottom: 12,
+          }}
+        >
+          <Mail size={26} color={brand.primary} />
+        </View>
+        <Text style={[styles.errorTitle, { color: colors.text, textAlign: 'center' }]}>
+          Verifikasi Email Pembeli
+        </Text>
+        <Text style={[styles.errorDesc, { color: colors.textSecondary, textAlign: 'center', marginTop: 6, marginBottom: 16 }]}>
+          {error || 'Masukkan alamat email yang digunakan saat checkout untuk melihat detail pesanan guest ini.'}
+        </Text>
+        <View style={{ width: '100%', maxWidth: 360 }}>
+          <Input
+            label="Email Pembeli"
+            placeholder="nama@email.com"
+            value={guestEmailInput}
+            onChangeText={(t) => {
+              setGuestEmailInput(t);
+              if (guestVerifyError) setGuestVerifyError(null);
+            }}
+            keyboardType="email-address"
+            autoCapitalize="none"
+            leftIcon={<Mail size={16} color={colors.textMuted} />}
+          />
+          {guestVerifyError ? (
+            <Text style={{ color: brand.danger, fontSize: 12.5, fontWeight: '600', marginBottom: 10 }}>
+              {guestVerifyError}
+            </Text>
+          ) : null}
+          <Button
+            title="Verifikasi & Buka Pesanan"
+            onPress={handleGuestVerifySubmit}
+            loading={verifyingGuest}
+            variant="primary"
+            size="md"
+          />
+          <Button
+            title="Kembali ke Pesanan Saya"
+            onPress={() => router.replace('/(tabs)/orders')}
+            variant="outline"
+            size="md"
+            style={{ marginTop: 10 }}
+          />
+        </View>
+      </View>
+    );
+  }
+
+  if (verificationMode === 'login' || (detail?.booking?.user_id != null && (!isAuthenticated || !user))) {
+    return (
+      <View style={[styles.centerWrap, { backgroundColor: colors.background }]}>
+        <Header showBack title="Detail Pesanan" />
+        <Text style={[styles.errorTitle, { color: colors.text, textAlign: 'center' }]}>
+          Login Diperlukan
+        </Text>
+        <Text style={[styles.errorDesc, { color: colors.textSecondary, textAlign: 'center', marginTop: 6 }]}>
+          Mengarahkan ke halaman login untuk memverifikasi pemilik pesanan...
+        </Text>
+      </View>
+    );
+  }
+
   if (error || !detail) {
     return (
       <View style={[styles.centerWrap, { backgroundColor: colors.background }]}>
         <Header showBack title="Detail Pesanan" />
-        <Text style={[styles.errorTitle, { color: brand.danger }]}>Pesanan Tidak Ditemukan</Text>
+        <Text style={[styles.errorTitle, { color: brand.danger }]}>
+          {verificationMode === 'forbidden' ? 'Akses Ditolak' : 'Pesanan Tidak Ditemukan'}
+        </Text>
         <Text style={[styles.errorDesc, { color: colors.textSecondary }]}>
           {error || `Kode booking "${id}" tidak ditemukan pada sistem.`}
         </Text>
@@ -487,14 +654,19 @@ export default function OrderDetailScreen() {
   }
 
   const { booking, event, ticket_type, tickets } = detail;
-  const isPending = booking.status === 'pending_payment';
-  const isPaid = booking.status === 'paid' || booking.status === 'lunas';
-  const isCancelled = booking.status === 'cancelled' || booking.status === 'dibatalkan';
-  const isExpired = booking.status === 'expired';
-  const isDeniedOrFailed = booking.status === 'denied' || booking.status === 'failed';
-  const isRefunded = booking.status === 'refunded';
-  const officialPaymentUrl = getOfficialPaymentUrl(booking);
-  const canSyncPayment = canUserSyncBookingPayment(booking, user, isAuthenticated);
+  const orderState = resolveOrderPaymentState(booking, event, tickets, nowMs);
+  const isPending = orderState.code === 'pending_payment';
+  const isPaid = orderState.code === 'paid';
+  const isCancelled = orderState.code === 'cancelled';
+  const isEventEnded = orderState.code === 'event_ended';
+  const isExpired = orderState.code === 'expired';
+  const isSalesClosed = orderState.code === 'sales_closed';
+  const isDeniedOrFailed = orderState.code === 'denied';
+  const isRefunded = orderState.code === 'refunded';
+  const officialPaymentUrl = orderState.canPay ? orderState.paymentUrl : null;
+  const canSyncPayment =
+    orderState.canSyncPayment &&
+    canUserSyncBookingPayment(booking, user, isAuthenticated, hasGuestToken);
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
@@ -569,6 +741,20 @@ export default function OrderDetailScreen() {
           </View>
         )}
 
+        {isEventEnded && (
+          <View style={[styles.statusBanner, { backgroundColor: isDark ? 'rgba(148,163,184,0.16)' : '#F1F5F9', borderColor: colors.borderStrong }]}>
+            <Clock size={20} color={colors.textMuted} />
+            <View style={{ flex: 1 }}>
+              <Text style={[styles.statusBannerTitle, { color: colors.text }]}>
+                Acara Selesai
+              </Text>
+              <Text style={[styles.statusBannerDesc, { color: colors.textSecondary }]}>
+                Pesanan ini belum dibayar dan acara telah berakhir.
+              </Text>
+            </View>
+          </View>
+        )}
+
         {isExpired && (
           <View style={[styles.statusBanner, { backgroundColor: isDark ? 'rgba(148,163,184,0.16)' : '#F1F5F9', borderColor: colors.borderStrong }]}>
             <Clock size={20} color={colors.textMuted} />
@@ -577,7 +763,21 @@ export default function OrderDetailScreen() {
                 Pembayaran Kedaluwarsa
               </Text>
               <Text style={[styles.statusBannerDesc, { color: colors.textSecondary }]}>
-                Batas waktu pembayaran telah berakhir. Kuota tiket telah dilepas kembali.
+                Batas waktu pembayaran telah habis.
+              </Text>
+            </View>
+          </View>
+        )}
+
+        {isSalesClosed && (
+          <View style={[styles.statusBanner, { backgroundColor: isDark ? 'rgba(148,163,184,0.16)' : '#F1F5F9', borderColor: colors.borderStrong }]}>
+            <AlertCircle size={20} color={colors.textSecondary} />
+            <View style={{ flex: 1 }}>
+              <Text style={[styles.statusBannerTitle, { color: colors.text }]}>
+                Penjualan Ditutup
+              </Text>
+              <Text style={[styles.statusBannerDesc, { color: colors.textSecondary }]}>
+                Penjualan tiket untuk acara ini sedang tidak tersedia.
               </Text>
             </View>
           </View>
@@ -659,7 +859,7 @@ export default function OrderDetailScreen() {
             <Text style={[styles.cardEyebrow, { color: colors.textMuted, marginBottom: 0 }]}>
               KODE BOOKING PESANAN
             </Text>
-            <Badge status={booking.status} />
+            <Badge label={orderState.label} variant={orderState.variant} />
           </View>
           <View style={[styles.codeRow, { marginTop: 8 }]}>
             <Text style={[styles.codeText, { color: brand.primary }]}>
@@ -681,7 +881,7 @@ export default function OrderDetailScreen() {
             </TouchableOpacity>
           </View>
 
-          {isPending && officialPaymentUrl && (
+          {isPending && orderState.canPay && officialPaymentUrl ? (
             <Button
               title="Bayar Sekarang (Midtrans Sandbox)"
               onPress={handlePayNow}
@@ -691,7 +891,22 @@ export default function OrderDetailScreen() {
               testID="order-pay-now-btn"
               style={{ marginTop: 14 }}
             />
-          )}
+          ) : isPending ? (
+            <View
+              style={{
+                marginTop: 14,
+                padding: 12,
+                borderRadius: 12,
+                borderWidth: 1,
+                borderColor: '#F59E0B',
+                backgroundColor: isDark ? 'rgba(245,158,11,0.12)' : '#FFFBEB',
+              }}
+            >
+              <Text style={{ fontSize: 12, color: colors.textSecondary, lineHeight: 18 }}>
+                Tautan pembayaran resmi belum tersedia. Pembayaran belum dikonfirmasi; hubungi penyelenggara atau periksa kembali status.
+              </Text>
+            </View>
+          ) : null}
 
           {isPending && canSyncPayment && (
             <Button
@@ -711,11 +926,11 @@ export default function OrderDetailScreen() {
 
           {isPending && !canSyncPayment && (
             <Text style={[styles.syncHintText, { color: colors.textMuted }]}>
-              Status pesanan akan diperbarui otomatis oleh sistem pembayaran. Login sebagai pemilik pesanan untuk memeriksa status Sandbox secara manual.
+              Status pesanan akan diperbarui otomatis oleh sistem pembayaran. Login sebagai pemilik pesanan atau verifikasi email guest untuk memeriksa status Sandbox secara manual.
             </Text>
           )}
 
-          {isPending && (
+          {orderState.canCancel && (
             <Button
               title="Batalkan Pesanan"
               onPress={handleCancelOrder}
@@ -780,15 +995,21 @@ export default function OrderDetailScreen() {
 
             <View style={{ gap: 10, marginTop: 10 }}>
               {tickets.map((t, idx) => {
-                const effectiveStatus = getTicketDisplayStatus(booking.status, t.status);
-                const isPaidAndValid = isTicketQrEligible(booking.status, {
-                  status: effectiveStatus,
-                  qr_token: t.qr_token,
-                });
-                const isCancelled = booking.status === 'cancelled' || effectiveStatus === 'cancelled';
+                const effectiveStatus = resolveTicketDisplayStatus(booking, t, event, nowMs);
+                const isPaidAndValid = isTicketQrEligible(
+                  booking.status,
+                  {
+                    ...t,
+                    status: effectiveStatus,
+                    qr_token: t.qr_token,
+                  },
+                  event
+                );
+                const isCancelledTicket =
+                  booking.status === 'cancelled' || effectiveStatus === 'cancelled';
                 const statusColor = isPaidAndValid
                   ? '#10B981'
-                  : isCancelled
+                  : isCancelledTicket
                   ? '#EF4444'
                   : colors.textMuted;
 
@@ -809,6 +1030,11 @@ export default function OrderDetailScreen() {
                           Check-in: {formatWibDateTime(t.checked_in_at)}
                         </Text>
                       ) : null}
+                      {booking.status === 'paid' && effectiveStatus === 'event_ended' ? (
+                        <Text style={[styles.ticketPassStatus, { color: colors.textMuted, marginTop: 2 }]}>
+                          Acara telah selesai. QR nonaktif, pembayaran tetap Dibayar.
+                        </Text>
+                      ) : null}
                     </View>
 
                     {isPaidAndValid ? (
@@ -826,6 +1052,8 @@ export default function OrderDetailScreen() {
                             days_count: event?.days_count,
                             event_date: event?.event_date,
                             event_time: event?.event_time,
+                            event_end_time: event?.event_end_time,
+                            is_event_ended: t.is_event_ended ?? event?.is_event_ended ?? booking.is_event_ended,
                             venue: event?.venue,
                             ticket_type_name: ticket_type?.name,
                           } as any)
@@ -865,12 +1093,22 @@ export default function OrderDetailScreen() {
           ) : null}
           <View style={styles.summaryRow}>
             <Text style={[styles.summaryLabel, { color: colors.textSecondary }]}>
-              {ticket_type?.name || 'Tiket'} × {booking.quantity}
+              {ticket_type?.name || 'Tiket'} ({booking.quantity} × {formatRupiah(booking.unit_price)})
             </Text>
             <Text style={[styles.summaryVal, { color: colors.text }]}>
-              {formatRupiah(booking.total_price)}
+              {formatRupiah(Number(booking.unit_price || 0) * Number(booking.quantity || 0))}
             </Text>
           </View>
+          {Number(booking.discount_percent) > 0 ? (
+            <View style={styles.summaryRow}>
+              <Text style={[styles.summaryLabel, { color: '#10B981' }]}>
+                Diskon Fase Aktif ({booking.discount_percent}%)
+              </Text>
+              <Text style={[styles.summaryVal, { color: '#10B981' }]}>
+                Termasuk dalam harga satuan
+              </Text>
+            </View>
+          ) : null}
 
           <View style={[styles.summaryTotalRow, { borderTopColor: colors.border }]}>
             <Text style={[styles.summaryTotalLabel, { color: colors.text }]}>Total</Text>

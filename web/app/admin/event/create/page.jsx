@@ -13,7 +13,8 @@ import {
   Ticket,
 } from "lucide-react";
 import api from "@/app/lib/api";
-import { validateEventCreate } from "@/app/lib/adminForms";
+import { ADMIN_MEDIA_ACCEPT, validateEventCreate } from "@/app/lib/adminForms";
+import { useAdminMediaPreview } from "@/app/lib/useAdminMediaPreview";
 
 export default function CreateEventPage() {
   const router = useRouter();
@@ -30,6 +31,7 @@ export default function CreateEventPage() {
   const [artistName, setArtistName] = useState("");
   const [eventDate, setEventDate] = useState("");
   const [eventTime, setEventTime] = useState("19:00");
+  const [eventEndTime, setEventEndTime] = useState("");
 
   // Festival fields
   const [daysCount, setDaysCount] = useState(2);
@@ -52,10 +54,18 @@ export default function CreateEventPage() {
   const [initialStatus, setInitialStatus] = useState("draft");
 
   // Media files
-  const [posterFile, setPosterFile] = useState(null);
-  const [posterPreview, setPosterPreview] = useState(null);
-  const [bannerFile, setBannerFile] = useState(null);
-  const [bannerPreview, setBannerPreview] = useState(null);
+  const {
+    file: posterFile,
+    previewUrl: posterPreview,
+    error: posterError,
+    handleFileChange: handlePosterChange,
+  } = useAdminMediaPreview();
+  const {
+    file: bannerFile,
+    previewUrl: bannerPreview,
+    error: bannerError,
+    handleFileChange: handleBannerChange,
+  } = useAdminMediaPreview();
 
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
@@ -206,6 +216,9 @@ export default function CreateEventPage() {
       payload.artist_name = artistName.trim();
       payload.event_date = eventDate;
       payload.event_time = eventTime;
+      if (eventEndTime) {
+        payload.event_end_time = eventEndTime;
+      }
     } else {
       payload.days_count = Number(daysCount);
       payload.festival_artists = festivalArtists
@@ -390,7 +403,7 @@ export default function CreateEventPage() {
               </div>
 
               {eventType === "single" ? (
-                <div className="grid gap-4 sm:grid-cols-3">
+                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
                   <div>
                     <label className="mb-1 block text-xs font-medium text-slate-700 dark:text-slate-300">
                       Nama Artis Utama *
@@ -418,13 +431,24 @@ export default function CreateEventPage() {
                   </div>
                   <div>
                     <label className="mb-1 block text-xs font-medium text-slate-700 dark:text-slate-300">
-                      Jam Mulai *
+                      Jam Mulai (WIB) *
                     </label>
                     <input
                       type="time"
                       required
                       value={eventTime}
                       onChange={(e) => setEventTime(e.target.value)}
+                      className="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs text-slate-900 outline-none transition focus:border-slate-500 focus:ring-1 focus:ring-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white dark:focus:border-slate-400 dark:focus:ring-slate-400"
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-xs font-medium text-slate-700 dark:text-slate-300">
+                      Jam Selesai (WIB, opsional)
+                    </label>
+                    <input
+                      type="time"
+                      value={eventEndTime}
+                      onChange={(e) => setEventEndTime(e.target.value)}
                       className="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs text-slate-900 outline-none transition focus:border-slate-500 focus:ring-1 focus:ring-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white dark:focus:border-slate-400 dark:focus:ring-slate-400"
                     />
                   </div>
@@ -717,6 +741,7 @@ export default function CreateEventPage() {
                               </label>
                               <input
                                 type="number"
+                                step="0.01"
                                 min={0}
                                 max={100}
                                 value={ph.discount_percent}
@@ -799,15 +824,15 @@ export default function CreateEventPage() {
               <label className="block text-xs font-medium text-slate-700 dark:text-slate-300">
                 Poster Event (Opsional)
               </label>
-              <label className="flex h-44 cursor-pointer flex-col items-center justify-center overflow-hidden rounded-xl border border-dashed border-slate-300 transition hover:border-slate-400 dark:border-slate-700 dark:hover:border-slate-500">
+              <label className="flex min-h-60 cursor-pointer flex-col items-center justify-center overflow-hidden rounded-xl border border-dashed border-slate-300 bg-slate-50/70 p-3 transition hover:border-slate-400 dark:border-slate-700 dark:bg-slate-800/40 dark:hover:border-slate-500">
                 {posterPreview ? (
                   <Image
-                    width={640}
-                    height={480}
+                    width={600}
+                    height={800}
                     unoptimized
                     src={posterPreview}
                     alt="Poster"
-                    className="h-full w-full object-cover"
+                    className="h-auto max-h-72 w-auto max-w-full rounded-lg object-contain"
                   />
                 ) : (
                   <>
@@ -822,17 +847,20 @@ export default function CreateEventPage() {
                 )}
                 <input
                   type="file"
-                  accept="image/jpeg,image/png,image/webp"
+                  accept={ADMIN_MEDIA_ACCEPT}
                   className="hidden"
-                  onChange={(e) => {
-                    const f = e.target.files?.[0];
-                    if (f) {
-                      setPosterFile(f);
-                      setPosterPreview(URL.createObjectURL(f));
-                    }
-                  }}
+                  onChange={handlePosterChange}
                 />
               </label>
+              {posterError && (
+                <p
+                  role="alert"
+                  className="flex items-start gap-1.5 rounded-lg border border-rose-200 bg-rose-50 px-2.5 py-2 text-[11px] font-medium text-rose-700 dark:border-rose-900/60 dark:bg-rose-950/40 dark:text-rose-300"
+                >
+                  <AlertCircle size={13} className="mt-0.5 shrink-0" />
+                  <span>{posterError}</span>
+                </p>
+              )}
             </div>
 
             {/* Banner Upload */}
@@ -840,7 +868,7 @@ export default function CreateEventPage() {
               <label className="block text-xs font-medium text-slate-700 dark:text-slate-300">
                 Banner Event (Opsional)
               </label>
-              <label className="flex h-36 cursor-pointer flex-col items-center justify-center overflow-hidden rounded-xl border border-dashed border-slate-300 transition hover:border-slate-400 dark:border-slate-700 dark:hover:border-slate-500">
+              <label className="flex h-40 cursor-pointer flex-col items-center justify-center overflow-hidden rounded-xl border border-dashed border-slate-300 bg-slate-50/70 p-2 transition hover:border-slate-400 dark:border-slate-700 dark:bg-slate-800/40 dark:hover:border-slate-500">
                 {bannerPreview ? (
                   <Image
                     width={640}
@@ -848,7 +876,7 @@ export default function CreateEventPage() {
                     unoptimized
                     src={bannerPreview}
                     alt="Banner"
-                    className="h-full w-full object-cover"
+                    className="h-auto max-h-36 w-auto max-w-full rounded-lg object-contain"
                   />
                 ) : (
                   <>
@@ -857,23 +885,26 @@ export default function CreateEventPage() {
                       Klik untuk memilih Banner
                     </span>
                     <span className="text-[10px] text-slate-400">
-                      Rekomendasi rasio 16:9
+                      JPG, PNG, WEBP (maks. 5MB, rasio 16:9)
                     </span>
                   </>
                 )}
                 <input
                   type="file"
-                  accept="image/jpeg,image/png,image/webp"
+                  accept={ADMIN_MEDIA_ACCEPT}
                   className="hidden"
-                  onChange={(e) => {
-                    const f = e.target.files?.[0];
-                    if (f) {
-                      setBannerFile(f);
-                      setBannerPreview(URL.createObjectURL(f));
-                    }
-                  }}
+                  onChange={handleBannerChange}
                 />
               </label>
+              {bannerError && (
+                <p
+                  role="alert"
+                  className="flex items-start gap-1.5 rounded-lg border border-rose-200 bg-rose-50 px-2.5 py-2 text-[11px] font-medium text-rose-700 dark:border-rose-900/60 dark:bg-rose-950/40 dark:text-rose-300"
+                >
+                  <AlertCircle size={13} className="mt-0.5 shrink-0" />
+                  <span>{bannerError}</span>
+                </p>
+              )}
             </div>
           </div>
         </div>

@@ -12,10 +12,15 @@ import { RefreshCw, Search, Ticket } from 'lucide-react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
 
 import { useAppTheme } from '../../src/context/ThemeContext';
-import { fetchBookingDetail } from '../../src/api/endpoints';
-import { getSavedBookingEntries, saveBookingEntry } from '../../src/utils/storage';
-import { getTicketDisplayStatus } from '../../src/utils/formatters';
-import { TicketItem } from '../../src/types';
+import { useAuth } from '../../src/context/AuthContext';
+import { fetchBookingDetail, fetchMyBookings } from '../../src/api/endpoints';
+import {
+  getGuestTokenForBooking,
+  getSavedBookingEntries,
+  saveBookingEntry,
+} from '../../src/utils/storage';
+import { resolveTicketDisplayStatus } from '../../src/utils/payment';
+import { BookingDetailResponse, TicketItem } from '../../src/types';
 import { Header } from '../../src/components/common/Header';
 import { Input } from '../../src/components/common/Input';
 import { Button } from '../../src/components/common/Button';
@@ -26,14 +31,17 @@ import { OrderCardSkeleton } from '../../src/components/common/Skeleton';
 
 const FILTERS = [
   { id: 'all', label: 'Semua Tiket' },
-  { id: 'valid', label: 'Berlaku' },
-  { id: 'used', label: 'Sudah Check-In' },
-  { id: 'cancelled', label: 'Dibatalkan' },
+  { id: 'valid', label: 'Valid / Aktif' },
+  { id: 'used', label: 'Sudah Digunakan' },
+  { id: 'event_ended', label: 'Acara Selesai' },
+  { id: 'cancelled', label: 'Pesanan Dibatalkan' },
 ];
 
 export default function TicketsScreen() {
   const router = useRouter();
   const { colors, brand } = useAppTheme();
+  const { user, isAuthenticated, loading: authLoading } = useAuth();
+  const isAccountHistory = Boolean(isAuthenticated && user && user.role !== 'officer');
 
   const [tickets, setTickets] = useState<TicketItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -41,6 +49,7 @@ export default function TicketsScreen() {
   const [statusFilter, setStatusFilter] = useState('all');
 
   const [lookupCode, setLookupCode] = useState('');
+  const [lookupEmail, setLookupEmail] = useState('');
   const [lookupLoading, setLookupLoading] = useState(false);
   const [lookupError, setLookupError] = useState<string | null>(null);
 
@@ -48,52 +57,78 @@ export default function TicketsScreen() {
   const hasLoadedRef = useRef(false);
 
   const fetchTickets = useCallback(async (): Promise<TicketItem[]> => {
-    const entries = await getSavedBookingEntries();
-    if (entries.length === 0) {
-      return [];
+    let detailList: BookingDetailResponse[] = [];
+
+    if (isAccountHistory) {
+      const res = await fetchMyBookings();
+      detailList = res.success && Array.isArray(res.data?.bookings) ? res.data.bookings : [];
+    } else {
+      const entries = await getSavedBookingEntries();
+      if (entries.length === 0) {
+        return [];
+      }
+
+      const settled = await Promise.allSettled(
+        entries.map(async (e) => {
+          const res = await fetchBookingDetail(e.booking_code, {
+            guestToken: e.guest_token,
+            silent: true,
+          });
+          if (res.success && res.data?.booking) {
+            if (res.data.guest_access_token && res.data.guest_access_token !== e.guest_token) {
+              await saveBookingEntry({
+                booking_code: e.booking_code,
+                guest_token: res.data.guest_access_token,
+              });
+            }
+            return res.data;
+          }
+          throw new Error('Not found');
+        })
+      );
+
+      detailList = settled
+        .filter((r): r is PromiseFulfilledResult<BookingDetailResponse> => r.status === 'fulfilled')
+        .map((r) => r.value);
     }
 
-    const settled = await Promise.allSettled(
-      entries.map((e) => fetchBookingDetail(e.booking_code))
-    );
-
     const aggregated: TicketItem[] = [];
-    settled.forEach((result) => {
-      if (result.status === 'fulfilled' && result.value?.success && result.value.data) {
-        const { booking, event, ticket_type, tickets: tList } = result.value.data;
-        (tList || []).forEach((t) => {
-          aggregated.push({
-            ...t,
-            status: getTicketDisplayStatus(booking.status, t.status) as any,
-            booking_code: booking.booking_code,
-            booking_status: booking.status,
-            buyer_name: booking.buyer_name,
-            recipient_email: booking.recipient_email || booking.buyer_email,
-            event_id: event?.id,
-            event_name: event?.name || 'Event TicketWave',
-            event_type: event?.event_type || null,
-            days_count: event?.days_count ?? null,
-            poster_url: event?.poster_url || event?.banner_url || null,
-            artist_name:
-              event?.artist_name ||
-              (event?.event_type === 'festival'
-                ? `Festival ${event?.days_count || 1} Hari`
-                : 'Live Event'),
-            venue: event?.venue
-              ? `${event.venue}${event.city ? `, ${event.city}` : ''}`
-              : event?.city || '-',
-            event_date: event?.event_date,
-            event_time: event?.event_time,
-            ticket_type_name: ticket_type?.name || 'Regular',
-          });
+    detailList.forEach(({ booking, event, ticket_type, tickets: tList }) => {
+      (tList || []).forEach((t) => {
+        aggregated.push({
+          ...t,
+          status: resolveTicketDisplayStatus(booking, t, event) as any,
+          booking_code: booking.booking_code,
+          booking_status: booking.status,
+          buyer_name: booking.buyer_name,
+          recipient_email: booking.recipient_email || booking.buyer_email,
+          event_id: event?.id,
+          event_name: event?.name || 'Event TicketWave',
+          event_type: event?.event_type || null,
+          days_count: event?.days_count ?? null,
+          poster_url: event?.poster_url || event?.banner_url || null,
+          artist_name:
+            event?.artist_name ||
+            (event?.event_type === 'festival'
+              ? `Festival ${event?.days_count || 1} Hari`
+              : 'Live Event'),
+          venue: event?.venue
+            ? `${event.venue}${event.city ? `, ${event.city}` : ''}`
+            : event?.city || '-',
+          event_date: event?.event_date,
+          event_time: event?.event_time,
+          event_end_time: event?.event_end_time,
+          is_event_ended: t.is_event_ended ?? event?.is_event_ended ?? booking.is_event_ended,
+          ticket_type_name: ticket_type?.name || 'Regular',
         });
-      }
+      });
     });
 
     return aggregated;
-  }, []);
+  }, [isAccountHistory]);
 
   useEffect(() => {
+    if (authLoading) return;
     let ignore = false;
     fetchTickets()
       .then((items) => {
@@ -117,7 +152,7 @@ export default function TicketsScreen() {
     return () => {
       ignore = true;
     };
-  }, [fetchTickets]);
+  }, [authLoading, fetchTickets]);
 
   useFocusEffect(
     useCallback(() => {
@@ -150,24 +185,38 @@ export default function TicketsScreen() {
 
   const handleImportBooking = async () => {
     const code = lookupCode.trim().toUpperCase();
+    const buyerEmail = lookupEmail.trim();
     if (!code) return;
     setLookupLoading(true);
     setLookupError(null);
 
     try {
-      const res = await fetchBookingDetail(code);
+      const guestToken = await getGuestTokenForBooking(code);
+      const res = await fetchBookingDetail(code, {
+        guestToken,
+        buyerEmail: buyerEmail || null,
+        silent: true,
+      });
       if (res.success && res.data?.booking) {
         await saveBookingEntry({
           booking_code: res.data.booking.booking_code,
-          payment_url: res.data.booking.payment_url || null,
+          guest_token: res.data.guest_access_token || guestToken || null,
           recipient_email: res.data.booking.recipient_email || res.data.booking.buyer_email,
           event_name: res.data.event?.name,
         });
         setLookupCode('');
+        setLookupEmail('');
         onRefresh();
       }
     } catch (err: any) {
-      setLookupError(err?.message || `Kode booking "${code}" tidak ditemukan.`);
+      const reqMode = err?.data?.errors?.requires_verification;
+      setLookupError(
+        reqMode === 'guest_email'
+          ? 'Masukkan Email Pembeli untuk memverifikasi pesanan guest ini.'
+          : reqMode === 'login'
+          ? 'Pesanan ini terdaftar atas akun pengguna. Silakan login terlebih dahulu.'
+          : err?.message || `Kode booking "${code}" tidak ditemukan.`
+      );
     } finally {
       setLookupLoading(false);
     }
@@ -219,6 +268,16 @@ export default function TicketsScreen() {
             style={{ marginLeft: 8 }}
           />
         </View>
+        {!isAccountHistory && (
+          <Input
+            placeholder="Email pembeli (opsional, untuk verifikasi guest)"
+            value={lookupEmail}
+            onChangeText={setLookupEmail}
+            keyboardType="email-address"
+            autoCapitalize="none"
+            containerStyle={{ marginTop: 8, marginBottom: 0 }}
+          />
+        )}
         {lookupError ? (
           <Text style={[styles.errorText, { color: brand.danger }]}>{lookupError}</Text>
         ) : null}

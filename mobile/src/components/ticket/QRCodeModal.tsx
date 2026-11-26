@@ -57,7 +57,12 @@ export function QRCodeModal({ visible, ticket, onClose }: QRCodeModalProps) {
 
   if (!ticket) return null;
 
-  const isValid = isTicketQrEligible(ticket.booking_status, ticket);
+  const isValid = isTicketQrEligible(ticket.booking_status, ticket, {
+    is_event_ended: ticket.is_event_ended,
+    event_type: ticket.event_type,
+    event_date: ticket.event_date,
+    event_end_time: ticket.event_end_time,
+  });
 
   const handleCopyToken = async () => {
     if (!isValid || !ticket.qr_token) return;
@@ -145,15 +150,27 @@ export function QRCodeModal({ visible, ticket, onClose }: QRCodeModalProps) {
             <View style={[styles.inactiveCard, { backgroundColor: colors.surfaceElevated, borderColor: colors.border }]}>
               <AlertTriangle size={36} color="#EF4444" />
               <Text style={[styles.inactiveTitle, { color: colors.text }]}>
-                {ticket.status === 'used' ? 'Tiket Sudah Digunakan' : 'QR Gate Tidak Tersedia'}
+                {ticket.status === 'used'
+                  ? 'Tiket Sudah Digunakan'
+                  : ticket.status === 'event_ended'
+                  ? 'Acara Telah Berakhir'
+                  : 'QR Gate Tidak Tersedia'}
               </Text>
               <Text style={[styles.inactiveSubtitle, { color: colors.textSecondary }]}>
                 {ticket.status === 'used'
                   ? `Tiket ini sudah digunakan untuk check-in${
                       ticket.checked_in_at ? ` pada ${formatWibDateTime(ticket.checked_in_at)}` : ''
                     }.`
-                  : ticket.booking_status === 'cancelled'
+                  : ticket.status === 'event_ended'
+                  ? ticket.booking_status === 'paid'
+                    ? 'Acara telah berakhir. QR tiket tidak lagi aktif untuk check-in, tetapi riwayat pembayaran Anda tetap Dibayar.'
+                    : 'Pesanan ini belum dibayar dan acara telah berakhir.'
+                  : ticket.booking_status === 'cancelled' || ticket.status === 'cancelled'
                   ? 'Pesanan ini telah dibatalkan sehingga e-ticket / QR Gate dinonaktifkan.'
+                  : ticket.status === 'expired'
+                  ? 'Batas waktu pembayaran telah habis.'
+                  : ticket.status === 'sales_closed'
+                  ? 'Penjualan tiket untuk acara ini sedang tidak tersedia.'
                   : ticket.booking_status === 'pending_payment'
                   ? 'Pesanan belum dibayar. Selesaikan pembayaran untuk mengaktifkan QR Gate.'
                   : 'E-ticket ini tidak aktif atau kedaluwarsa.'}

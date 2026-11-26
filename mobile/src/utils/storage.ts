@@ -184,22 +184,66 @@ export async function setCustomApiBaseUrl(url: string | null): Promise<void> {
 export async function getSavedBookingEntries(): Promise<SavedBookingEntry[]> {
   try {
     const raw = await AsyncStorage.getItem(STORAGE_KEYS.BOOKING_ENTRIES);
-    return raw ? JSON.parse(raw) : [];
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    const byCode = new Map<string, SavedBookingEntry>();
+    for (const item of parsed) {
+      const rawCode = typeof item === 'string' ? item : item?.booking_code;
+      if (typeof rawCode !== 'string' || !rawCode.trim()) continue;
+      const code = rawCode.trim().toUpperCase();
+      const rawToken =
+        typeof item === 'object' && typeof item?.guest_token === 'string'
+          ? item.guest_token.trim()
+          : '';
+      const existing = byCode.get(code);
+      byCode.set(code, {
+        booking_code: code,
+        guest_token: rawToken || existing?.guest_token || null,
+        recipient_email:
+          (typeof item === 'object' ? item?.recipient_email : null) ||
+          existing?.recipient_email ||
+          null,
+        event_name:
+          (typeof item === 'object' ? item?.event_name : undefined) || existing?.event_name,
+        saved_at:
+          (typeof item === 'object' ? item?.saved_at : undefined) || existing?.saved_at,
+      });
+    }
+    return Array.from(byCode.values());
   } catch {
     return [];
+  }
+}
+
+export async function getGuestTokenForBooking(bookingCode?: string | null): Promise<string | null> {
+  if (!bookingCode) return null;
+  const code = String(bookingCode).trim().toUpperCase();
+  if (!code) return null;
+  try {
+    const entries = await getSavedBookingEntries();
+    const matched = entries.find((item) => item.booking_code === code);
+    return matched?.guest_token || null;
+  } catch {
+    return null;
   }
 }
 
 export async function saveBookingEntry(entry: SavedBookingEntry): Promise<void> {
   if (!entry?.booking_code) return;
   const code = entry.booking_code.trim().toUpperCase();
+  if (!code) return;
   try {
     const current = await getSavedBookingEntries();
     const filtered = current.filter((b) => b.booking_code !== code);
     const existing = current.find((b) => b.booking_code === code);
+    const cleanToken =
+      typeof entry.guest_token === 'string' && entry.guest_token.trim()
+        ? entry.guest_token.trim()
+        : existing?.guest_token || null;
     const updated: SavedBookingEntry = {
       booking_code: code,
-      payment_url: entry.payment_url || existing?.payment_url || null,
+      guest_token: cleanToken,
       recipient_email: entry.recipient_email || existing?.recipient_email || null,
       event_name: entry.event_name || existing?.event_name,
       saved_at: existing?.saved_at || new Date().toISOString(),

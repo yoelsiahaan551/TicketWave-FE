@@ -70,7 +70,7 @@ export default function EditTicketPhasePage() {
         phase_name: phaseName,
         start_date: startDate,
         end_date: endDate,
-        discount_percent: Number(discount),
+        discount_percent: parseFloat(discount),
       });
       setSuccessMsg("Fase harga berhasil diperbarui!");
       setTimeout(() => {
@@ -195,6 +195,7 @@ export default function EditTicketPhasePage() {
                 <div className="flex items-center gap-2.5">
                   <input
                     type="number"
+                    step="0.01"
                     min={0}
                     max={100}
                     required

@@ -102,7 +102,7 @@ export default function OfficerEventsScreen() {
               Katalog Event Operasional Gate
             </Text>
             <Text style={[Typography.caption, styles.noticeDesc, { color: colors.textSecondary }]}>
-              Catatan: Backend saat ini belum memiliki relasi penugasan gate per petugas (ISSUE-07). Seluruh event publik aktif di bawah ini dapat divalidasi oleh petugas gate.
+              Data penugasan gate per petugas belum tersedia dari sistem backend. Seluruh event publik aktif di bawah ini dapat divalidasi oleh petugas gate.
             </Text>
           </View>
         </View>

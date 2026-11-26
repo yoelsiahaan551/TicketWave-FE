@@ -26,6 +26,7 @@ import { PaymentMethodId } from '../src/types';
 import { saveBookingEntry } from '../src/utils/storage';
 import { formatEventSchedule, formatRupiah } from '../src/utils/formatters';
 import {
+  getMobilePaymentReturnUrl,
   getOfficialPaymentUrl,
   openMidtransPaymentBrowser,
 } from '../src/utils/payment';
@@ -191,6 +192,7 @@ export default function CheckoutScreen() {
     setSubmitting(true);
 
     try {
+      const paymentReturnUrl = getMobilePaymentReturnUrl();
       const res = await createCheckout({
         event_id: Number(checkoutData.eventId),
         ticket_type_id: Number(checkoutData.ticketTypeId),
@@ -202,6 +204,7 @@ export default function CheckoutScreen() {
           ? { recipient_email: recipientEmail.trim() }
           : {}),
         payment_method: selectedPaymentMethod,
+        ...(paymentReturnUrl ? { return_url: paymentReturnUrl } : {}),
       });
 
       if (res.success && res.data?.booking) {
@@ -221,13 +224,16 @@ export default function CheckoutScreen() {
 
         await saveBookingEntry({
           booking_code: booking.booking_code,
-          payment_url: officialPaymentUrl,
+          guest_token: res.data.guest_access_token || null,
           recipient_email: recipientEmail.trim() || buyerEmail.trim(),
           event_name: checkoutData.eventName,
         });
 
         if (officialPaymentUrl) {
-          const browserResult = await openMidtransPaymentBrowser(officialPaymentUrl);
+          const browserResult = await openMidtransPaymentBrowser(
+            officialPaymentUrl,
+            paymentReturnUrl
+          );
           router.replace({
             pathname: '/order/[id]',
             params: {
@@ -390,23 +396,46 @@ export default function CheckoutScreen() {
           {/* Price Breakdown / Summary Card */}
           <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
             <Text style={[styles.cardEyebrow, { color: brand.primary }]}>RINCIAN BIAYA</Text>
-            <View style={styles.breakdownRow}>
-              <Text style={[styles.breakdownLabel, { color: colors.textSecondary }]}>
-                Harga Tiket ({checkoutData.quantity}x)
-              </Text>
-              <Text style={[styles.breakdownVal, { color: colors.text }]}>
-                {formatRupiah(totalAmount)}
-              </Text>
-            </View>
+            {(() => {
+              const qty = Number(checkoutData.quantity || 1);
+              const unitFinal = Number(checkoutData.unitPrice || 0);
+              const unitBase = Number(checkoutData.basePrice ?? unitFinal);
+              const normalSubtotal = unitBase * qty;
+              const phaseDiscount = Math.max(0, (unitBase - unitFinal) * qty);
+              const discPct = checkoutData.discountPercent;
+              return (
+                <>
+                  <View style={styles.breakdownRow}>
+                    <Text style={[styles.breakdownLabel, { color: colors.textSecondary }]}>
+                      Harga Normal ({qty}x)
+                    </Text>
+                    <Text style={[styles.breakdownVal, { color: colors.text }]}>
+                      {formatRupiah(normalSubtotal)}
+                    </Text>
+                  </View>
 
-            <View style={styles.breakdownRow}>
-              <Text style={[styles.breakdownLabel, { color: colors.textSecondary }]}>
-                Biaya Layanan / Admin
-              </Text>
-              <Text style={[styles.breakdownVal, { color: '#10B981', fontWeight: '800' }]}>
-                Bebas Biaya
-              </Text>
-            </View>
+                  {phaseDiscount > 0 ? (
+                    <View style={styles.breakdownRow}>
+                      <Text style={[styles.breakdownLabel, { color: '#10B981' }]}>
+                        Diskon Fase{discPct != null ? ` (${discPct}%)` : ''}
+                      </Text>
+                      <Text style={[styles.breakdownVal, { color: '#10B981', fontWeight: '700' }]}>
+                        -{formatRupiah(phaseDiscount)}
+                      </Text>
+                    </View>
+                  ) : null}
+
+                  <View style={styles.breakdownRow}>
+                    <Text style={[styles.breakdownLabel, { color: colors.textSecondary }]}>
+                      Biaya Layanan / Admin
+                    </Text>
+                    <Text style={[styles.breakdownVal, { color: '#10B981', fontWeight: '800' }]}>
+                      Bebas Biaya
+                    </Text>
+                  </View>
+                </>
+              );
+            })()}
 
             <View style={[styles.totalDivider, { borderTopColor: colors.border }]}>
               <View style={styles.totalRow}>

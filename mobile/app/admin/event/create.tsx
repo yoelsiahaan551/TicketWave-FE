@@ -26,6 +26,10 @@ import { Header } from '../../../src/components/common/Header';
 import { Input } from '../../../src/components/common/Input';
 import { Button } from '../../../src/components/common/Button';
 import { Typography } from '../../../src/constants/Typography';
+import {
+  getMediaPickerErrorMessage,
+  validateAdminMediaAsset,
+} from '../../../src/utils/mediaValidation';
 
 interface DraftPhase {
   phase_name: 'early_bird' | 'presale' | 'normal';
@@ -67,11 +71,14 @@ export default function AdminCreateEventScreen() {
   // Optional Media
   const [posterUri, setPosterUri] = useState<string | null>(null);
   const [bannerUri, setBannerUri] = useState<string | null>(null);
+  const [posterError, setPosterError] = useState<string | null>(null);
+  const [bannerError, setBannerError] = useState<string | null>(null);
 
   // Single
   const [artistName, setArtistName] = useState('');
   const [eventDate, setEventDate] = useState('');
   const [eventTime, setEventTime] = useState('19:00:00');
+  const [eventEndTime, setEventEndTime] = useState('');
 
   // Festival
   const [daysCount, setDaysCount] = useState('1');
@@ -106,13 +113,36 @@ export default function AdminCreateEventScreen() {
       Alert.alert('Izin Galeri', 'Aplikasi memerlukan izin untuk memilih gambar.');
       return;
     }
-    const picked = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ['images'],
-      quality: 0.8,
-    });
-    if (!picked.canceled && picked.assets?.[0]?.uri) {
-      if (type === 'poster') setPosterUri(picked.assets[0].uri);
-      else setBannerUri(picked.assets[0].uri);
+    try {
+      const picked = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images'],
+        quality: 0.8,
+      });
+      if (!picked.canceled && picked.assets?.[0]) {
+        const asset = picked.assets[0] as any;
+        const check = validateAdminMediaAsset({
+          fileName: asset.fileName ?? asset.file?.name,
+          mimeType: asset.mimeType ?? asset.file?.type,
+          fileSize: asset.fileSize ?? asset.file?.size,
+          uri: asset.uri,
+        });
+        if (!check.valid) {
+          if (type === 'poster') setPosterError(check.error);
+          else setBannerError(check.error);
+          return;
+        }
+        if (type === 'poster') {
+          setPosterError(null);
+          if (asset.uri) setPosterUri(asset.uri);
+        } else {
+          setBannerError(null);
+          if (asset.uri) setBannerUri(asset.uri);
+        }
+      }
+    } catch (err) {
+      const msg = getMediaPickerErrorMessage(err);
+      if (type === 'poster') setPosterError(msg);
+      else setBannerError(msg);
     }
   };
 
@@ -239,6 +269,19 @@ export default function AdminCreateEventScreen() {
       payload.artist_name = cleanArtist;
       payload.event_date = cleanDate;
       payload.event_time = cleanTime;
+      const rawEnd = eventEndTime.trim();
+      if (rawEnd) {
+        const cleanEnd = /^\d{2}:\d{2}$/.test(rawEnd) ? `${rawEnd}:00` : rawEnd;
+        if (!/^\d{2}:\d{2}(:\d{2})?$/.test(cleanEnd)) {
+          setError('Format Jam Selesai tidak valid. Gunakan HH:MM atau HH:MM:SS.');
+          return;
+        }
+        if (cleanEnd <= cleanTime) {
+          setError('Jam Selesai harus setelah Jam Mulai.');
+          return;
+        }
+        payload.event_end_time = cleanEnd;
+      }
     } else {
       const parsedDays = Number(daysCount);
       if (!Number.isInteger(parsedDays) || parsedDays < 1 || parsedDays > 10) {
@@ -336,7 +379,7 @@ export default function AdminCreateEventScreen() {
           await uploadEventMedia(newEventId, 'poster', posterUri);
           setPosterUri(null);
         } catch (mErr: any) {
-          warnings.push(`Poster (ISSUE-03): ${mErr?.message || 'HTTP 500'}`);
+          warnings.push(`Poster: ${mErr?.message || 'Gagal mengunggah'}`);
         }
       }
 
@@ -345,7 +388,7 @@ export default function AdminCreateEventScreen() {
           await uploadEventMedia(newEventId, 'banner', bannerUri);
           setBannerUri(null);
         } catch (mErr: any) {
-          warnings.push(`Banner (ISSUE-03): ${mErr?.message || 'HTTP 500'}`);
+          warnings.push(`Banner: ${mErr?.message || 'Gagal mengunggah'}`);
         }
       }
 
@@ -545,6 +588,12 @@ export default function AdminCreateEventScreen() {
                 placeholder="19:00:00"
                 value={eventTime}
                 onChangeText={setEventTime}
+              />
+              <Input
+                label="Jam Selesai (WIB, Opsional)"
+                placeholder="22:00:00"
+                value={eventEndTime}
+                onChangeText={setEventEndTime}
               />
             </View>
           ) : (
@@ -788,7 +837,7 @@ export default function AdminCreateEventScreen() {
 
             <View style={styles.mediaRow}>
               <View style={{ flex: 1, gap: 8 }}>
-                {posterUri && <Image source={{ uri: posterUri }} style={styles.mediaPreview} />}
+                {posterUri && <Image source={{ uri: posterUri }} style={styles.mediaPreview} resizeMode="contain" />}
                 <Button
                   title={posterUri ? 'Ganti Poster' : 'Pilih Poster'}
                   onPress={() => handlePickMedia('poster')}
@@ -796,9 +845,14 @@ export default function AdminCreateEventScreen() {
                   variant="secondary"
                   icon={<Upload size={14} color={colors.text} />}
                 />
+                {posterError ? (
+                  <Text style={{ fontSize: 11.5, color: brand.danger, fontWeight: '600' }}>
+                    {posterError}
+                  </Text>
+                ) : null}
               </View>
               <View style={{ flex: 1, gap: 8 }}>
-                {bannerUri && <Image source={{ uri: bannerUri }} style={styles.mediaPreview} />}
+                {bannerUri && <Image source={{ uri: bannerUri }} style={styles.mediaPreview} resizeMode="cover" />}
                 <Button
                   title={bannerUri ? 'Ganti Banner' : 'Pilih Banner'}
                   onPress={() => handlePickMedia('banner')}
@@ -806,6 +860,11 @@ export default function AdminCreateEventScreen() {
                   variant="secondary"
                   icon={<Upload size={14} color={colors.text} />}
                 />
+                {bannerError ? (
+                  <Text style={{ fontSize: 11.5, color: brand.danger, fontWeight: '600' }}>
+                    {bannerError}
+                  </Text>
+                ) : null}
               </View>
             </View>
           </View>

@@ -26,6 +26,10 @@ import { Input } from '@/src/components/common/Input';
 import { Button } from '@/src/components/common/Button';
 import { Skeleton } from '@/src/components/common/Skeleton';
 import { Typography } from '@/src/constants/Typography';
+import {
+  getMediaPickerErrorMessage,
+  validateAdminMediaAsset,
+} from '@/src/utils/mediaValidation';
 
 const ALL_STATUSES: EventStatus[] = [
   'draft',
@@ -54,11 +58,14 @@ export default function AdminEditEventScreen() {
   const [artistName, setArtistName] = useState('');
   const [eventDate, setEventDate] = useState('');
   const [eventTime, setEventTime] = useState('');
+  const [eventEndTime, setEventEndTime] = useState('');
   const [daysCount, setDaysCount] = useState('');
   const [posterUrl, setPosterUrl] = useState<string | null>(null);
   const [bannerUrl, setBannerUrl] = useState<string | null>(null);
   const [newPosterUri, setNewPosterUri] = useState<string | null>(null);
   const [newBannerUri, setNewBannerUri] = useState<string | null>(null);
+  const [posterError, setPosterError] = useState<string | null>(null);
+  const [bannerError, setBannerError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [warning, setWarning] = useState<string | null>(null);
 
@@ -77,6 +84,7 @@ export default function AdminEditEventScreen() {
           setArtistName(ev.artist_name || '');
           setEventDate(ev.event_date || '');
           setEventTime(ev.event_time || '');
+          setEventEndTime(ev.event_end_time || '');
           setDaysCount(ev.days_count ? String(ev.days_count) : '');
           setPosterUrl(ev.poster_url || null);
           setBannerUrl(ev.banner_url || null);
@@ -91,13 +99,36 @@ export default function AdminEditEventScreen() {
       Alert.alert('Izin Galeri', 'Aplikasi memerlukan izin untuk memilih gambar.');
       return;
     }
-    const picked = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ['images'],
-      quality: 0.8,
-    });
-    if (!picked.canceled && picked.assets?.[0]?.uri) {
-      if (type === 'poster') setNewPosterUri(picked.assets[0].uri);
-      else setNewBannerUri(picked.assets[0].uri);
+    try {
+      const picked = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images'],
+        quality: 0.8,
+      });
+      if (!picked.canceled && picked.assets?.[0]) {
+        const asset = picked.assets[0] as any;
+        const check = validateAdminMediaAsset({
+          fileName: asset.fileName ?? asset.file?.name,
+          mimeType: asset.mimeType ?? asset.file?.type,
+          fileSize: asset.fileSize ?? asset.file?.size,
+          uri: asset.uri,
+        });
+        if (!check.valid) {
+          if (type === 'poster') setPosterError(check.error);
+          else setBannerError(check.error);
+          return;
+        }
+        if (type === 'poster') {
+          setPosterError(null);
+          if (asset.uri) setNewPosterUri(asset.uri);
+        } else {
+          setBannerError(null);
+          if (asset.uri) setNewBannerUri(asset.uri);
+        }
+      }
+    } catch (err) {
+      const msg = getMediaPickerErrorMessage(err);
+      if (type === 'poster') setPosterError(msg);
+      else setBannerError(msg);
     }
   };
 
@@ -127,6 +158,23 @@ export default function AdminEditEventScreen() {
         if (eventTime.trim()) {
           const t = eventTime.trim();
           payload.event_time = /^\d{2}:\d{2}$/.test(t) ? `${t}:00` : t;
+        }
+        const rawEnd = eventEndTime.trim();
+        if (rawEnd) {
+          const cleanEnd = /^\d{2}:\d{2}$/.test(rawEnd) ? `${rawEnd}:00` : rawEnd;
+          if (!/^\d{2}:\d{2}(:\d{2})?$/.test(cleanEnd)) {
+            setError('Format Jam Selesai tidak valid. Gunakan HH:MM atau HH:MM:SS.');
+            setSubmitting(false);
+            return;
+          }
+          if (payload.event_time && cleanEnd <= payload.event_time) {
+            setError('Jam Selesai harus setelah Jam Mulai.');
+            setSubmitting(false);
+            return;
+          }
+          payload.event_end_time = cleanEnd;
+        } else {
+          payload.event_end_time = null;
         }
       } else if (daysCount) {
         const parsedDays = Number(daysCount);
@@ -161,7 +209,7 @@ export default function AdminEditEventScreen() {
       }
 
       if (mediaFailures.length > 0) {
-        const warnMsg = `Metadata event tersimpan, namun unggah media gagal (ISSUE-03 Cloudinary Backend): ${mediaFailures.join('; ')}`;
+        const warnMsg = `Metadata event tersimpan, namun unggah media gagal: ${mediaFailures.join('; ')}`;
         setWarning(warnMsg);
         if (Platform.OS !== 'web') {
           Alert.alert('Metadata Tersimpan (Media Gagal)', warnMsg);
@@ -277,6 +325,12 @@ export default function AdminEditEventScreen() {
                   value={eventTime}
                   onChangeText={setEventTime}
                 />
+                <Input
+                  label="Jam Selesai (WIB, Opsional)"
+                  placeholder="22:00:00"
+                  value={eventEndTime}
+                  onChangeText={setEventEndTime}
+                />
               </>
             ) : (
               <Input
@@ -294,7 +348,7 @@ export default function AdminEditEventScreen() {
             <View style={styles.mediaRow}>
               <View style={styles.mediaCol}>
                 {(newPosterUri || posterUrl) && (
-                  <Image source={{ uri: newPosterUri || posterUrl! }} style={styles.mediaPreview} />
+                  <Image source={{ uri: newPosterUri || posterUrl! }} style={styles.mediaPreview} resizeMode="contain" />
                 )}
                 <Button
                   title={newPosterUri ? 'Ganti Poster' : 'Pilih Poster'}
@@ -303,10 +357,15 @@ export default function AdminEditEventScreen() {
                   variant="secondary"
                   icon={<Upload size={14} color={colors.text} />}
                 />
+                {posterError ? (
+                  <Text style={{ fontSize: 11.5, color: brand.danger, fontWeight: '600' }}>
+                    {posterError}
+                  </Text>
+                ) : null}
               </View>
               <View style={styles.mediaCol}>
                 {(newBannerUri || bannerUrl) && (
-                  <Image source={{ uri: newBannerUri || bannerUrl! }} style={styles.mediaPreview} />
+                  <Image source={{ uri: newBannerUri || bannerUrl! }} style={styles.mediaPreview} resizeMode="cover" />
                 )}
                 <Button
                   title={newBannerUri ? 'Ganti Banner' : 'Pilih Banner'}
@@ -315,6 +374,11 @@ export default function AdminEditEventScreen() {
                   variant="secondary"
                   icon={<Upload size={14} color={colors.text} />}
                 />
+                {bannerError ? (
+                  <Text style={{ fontSize: 11.5, color: brand.danger, fontWeight: '600' }}>
+                    {bannerError}
+                  </Text>
+                ) : null}
               </View>
             </View>
 

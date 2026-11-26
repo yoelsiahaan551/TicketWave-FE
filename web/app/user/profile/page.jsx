@@ -293,67 +293,98 @@ export default function ProfilePage() {
         )}
 
         {/* Read-Only Profile Details */}
-        <div className="rounded-xl border border-slate-200/80 bg-white p-5 shadow-xs transition-colors dark:border-slate-800 dark:bg-slate-900 sm:p-6">
-          <div className="mb-5 flex items-center justify-between">
-            <h3 className="text-sm font-semibold text-slate-900 dark:text-white">
+        <section
+          aria-labelledby="detail-profil-heading"
+          className="rounded-xl border border-slate-200/80 bg-white p-5 shadow-xs transition-colors dark:border-slate-800 dark:bg-slate-900 sm:p-6"
+        >
+          <div className="mb-5 flex items-center justify-between gap-2">
+            <h3
+              id="detail-profil-heading"
+              className="text-sm font-semibold text-slate-900 dark:text-white"
+            >
               Detail Informasi Profil
             </h3>
             <span className="rounded-full bg-slate-100 px-2.5 py-0.5 text-[10px] font-medium text-slate-600 dark:bg-slate-800 dark:text-slate-300">
-              Read-Only
+              Hanya Lihat
             </span>
           </div>
 
-          <div className="space-y-4">
-            <div>
-              <label className="mb-1 block text-xs font-medium text-slate-700 dark:text-slate-300">
+          <dl className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            <div className="rounded-xl border border-slate-100 bg-slate-50/70 p-3.5 dark:border-slate-800 dark:bg-slate-800/40">
+              <dt className="flex items-center gap-1.5 text-[11px] font-medium text-slate-500 dark:text-slate-400">
+                <User className="h-3.5 w-3.5 text-slate-400" />
                 Nama Lengkap
-              </label>
-              <div className="relative">
-                <User className="absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-                <input
-                  type="text"
-                  value={user.name || ""}
-                  disabled
-                  className="w-full cursor-not-allowed rounded-xl border border-slate-200 bg-slate-50 py-2.5 pl-10 pr-3 text-xs text-slate-700 dark:border-slate-800 dark:bg-slate-800/60 dark:text-slate-300"
-                />
-              </div>
+              </dt>
+              <dd className="mt-1 text-xs font-semibold text-slate-900 dark:text-white">
+                {user.name || "-"}
+              </dd>
             </div>
 
-            <div>
-              <label className="mb-1 block text-xs font-medium text-slate-700 dark:text-slate-300">
+            <div className="rounded-xl border border-slate-100 bg-slate-50/70 p-3.5 dark:border-slate-800 dark:bg-slate-800/40">
+              <dt className="flex items-center gap-1.5 text-[11px] font-medium text-slate-500 dark:text-slate-400">
+                <Mail className="h-3.5 w-3.5 text-slate-400" />
                 Alamat Email
-              </label>
-              <div className="relative">
-                <Mail className="absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-                <input
-                  type="email"
-                  value={user.email || ""}
-                  disabled
-                  className="w-full cursor-not-allowed rounded-xl border border-slate-200 bg-slate-50 py-2.5 pl-10 pr-3 text-xs text-slate-700 dark:border-slate-800 dark:bg-slate-800/60 dark:text-slate-300"
-                />
-              </div>
+              </dt>
+              <dd className="mt-1 break-all text-xs font-semibold text-slate-900 dark:text-white">
+                {user.email || "-"}
+              </dd>
             </div>
 
-            <div>
-              <label className="mb-1 block text-xs font-medium text-slate-700 dark:text-slate-300">
+            <div className="rounded-xl border border-slate-100 bg-slate-50/70 p-3.5 dark:border-slate-800 dark:bg-slate-800/40">
+              <dt className="flex items-center gap-1.5 text-[11px] font-medium text-slate-500 dark:text-slate-400">
+                <Phone className="h-3.5 w-3.5 text-slate-400" />
                 Nomor Telepon
-              </label>
-              <div className="relative">
-                <Phone className="absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-                <input
-                  type="tel"
-                  value={user.phone || ""}
-                  disabled
-                  className="w-full cursor-not-allowed rounded-xl border border-slate-200 bg-slate-50 py-2.5 pl-10 pr-3 text-xs text-slate-700 dark:border-slate-800 dark:bg-slate-800/60 dark:text-slate-300"
-                />
-              </div>
+              </dt>
+              <dd className="mt-1 text-xs font-semibold text-slate-900 dark:text-white">
+                {user.phone || "-"}
+              </dd>
             </div>
-          </div>
 
-          <div className="mt-5 flex items-start gap-2 rounded-xl bg-slate-50 p-3 text-xs leading-relaxed text-slate-500 dark:bg-slate-800/60 dark:text-slate-400">
+            <div className="rounded-xl border border-slate-100 bg-slate-50/70 p-3.5 dark:border-slate-800 dark:bg-slate-800/40">
+              <dt className="flex items-center gap-1.5 text-[11px] font-medium text-slate-500 dark:text-slate-400">
+                <Shield className="h-3.5 w-3.5 text-slate-400" />
+                Peran Akun
+              </dt>
+              <dd className="mt-1 text-xs font-semibold text-slate-900 dark:text-white">
+                {roleLabels[user.role] || user.role}
+              </dd>
+            </div>
+
+            <div className="rounded-xl border border-slate-100 bg-slate-50/70 p-3.5 dark:border-slate-800 dark:bg-slate-800/40">
+              <dt className="flex items-center gap-1.5 text-[11px] font-medium text-slate-500 dark:text-slate-400">
+                {user.email_verified ? (
+                  <CheckCircle className="h-3.5 w-3.5 text-emerald-500" />
+                ) : (
+                  <AlertCircle className="h-3.5 w-3.5 text-amber-500" />
+                )}
+                Status Verifikasi Email
+              </dt>
+              <dd className="mt-1 text-xs font-semibold text-slate-900 dark:text-white">
+                {user.email_verified ? "Terverifikasi" : "Belum Diverifikasi"}
+              </dd>
+            </div>
+
+            <div className="rounded-xl border border-slate-100 bg-slate-50/70 p-3.5 dark:border-slate-800 dark:bg-slate-800/40">
+              <dt className="flex items-center gap-1.5 text-[11px] font-medium text-slate-500 dark:text-slate-400">
+                <Calendar className="h-3.5 w-3.5 text-slate-400" />
+                Terdaftar Sejak
+              </dt>
+              <dd className="mt-1 text-xs font-semibold text-slate-900 dark:text-white">
+                {user.created_at
+                  ? new Date(user.created_at).toLocaleDateString("id-ID", {
+                      day: "numeric",
+                      month: "long",
+                      year: "numeric",
+                    })
+                  : "-"}
+              </dd>
+            </div>
+          </dl>
+
+          <div className="mt-5 flex items-start gap-2 rounded-xl bg-slate-50 px-3.5 py-2.5 text-xs leading-relaxed text-slate-500 dark:bg-slate-800/60 dark:text-slate-400">
             <Info size={14} className="mt-0.5 shrink-0 text-slate-400" />
             <span>
-              Perubahan profil belum tersedia; data ini hanya dapat dibaca. Untuk mengatur ulang kata sandi akun Anda, silakan kunjungi halaman{" "}
+              Informasi profil pada area User bersifat hanya lihat (read-only). Untuk pengaturan tema atau reset kata sandi, buka{" "}
               <Link
                 href="/user/settings"
                 className="font-medium text-[#0080f2] hover:underline"
@@ -363,7 +394,7 @@ export default function ProfilePage() {
               .
             </span>
           </div>
-        </div>
+        </section>
       </div>
     </div>
   );

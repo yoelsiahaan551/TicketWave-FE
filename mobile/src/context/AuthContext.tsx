@@ -1,7 +1,7 @@
 import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { api, isInvalidTokenError } from '../api/client';
-import { fetchMeApi, loginApi, registerApi } from '../api/endpoints';
+import { fetchMeApi, loginApi, logoutApi, registerApi } from '../api/endpoints';
 import { User } from '../types';
 import {
   clearAuthStorage,
@@ -258,9 +258,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   const logout = useCallback(async () => {
-    api.bumpSessionVersion();
-    await clearAuthStorage();
-    setUser(null);
+    try {
+      const [accessToken, refreshToken] = await Promise.all([
+        getStoredAccessToken(),
+        getStoredRefreshToken(),
+      ]);
+      if (accessToken) {
+        await logoutApi(refreshToken);
+      }
+    } catch {
+      // Tetap lanjut bersihkan sesi lokal meskipun revoke token gagal (mis. sudah expired)
+    } finally {
+      api.bumpSessionVersion();
+      await clearAuthStorage();
+      setUser(null);
+    }
   }, []);
 
   return (

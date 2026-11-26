@@ -5,7 +5,8 @@ import { ShieldAlert } from 'lucide-react-native';
 
 import { useAppTheme } from '../../context/ThemeContext';
 import { useAuth } from '../../context/AuthContext';
-import { saveBookingEntry } from '../../utils/storage';
+import { fetchBookingDetail } from '../../api/endpoints';
+import { getGuestTokenForBooking, saveBookingEntry } from '../../utils/storage';
 import { Button } from '../common/Button';
 import { Header } from '../common/Header';
 
@@ -36,9 +37,52 @@ export function PaymentReturnHandler({ mode }: PaymentReturnHandlerProps) {
         return;
       }
 
-      await saveBookingEntry({ booking_code: resolvedCode });
-      if (!active) return;
+      if (!isAuthenticated || !user) {
+        await saveBookingEntry({ booking_code: resolvedCode });
+        if (!active) return;
+        router.replace({
+          pathname: '/order/[id]',
+          params: {
+            id: resolvedCode,
+            fromPayment: mode === 'error' ? 'error' : 'dismissed',
+          },
+        } as any);
+        return;
+      }
 
+      try {
+        const guestToken = await getGuestTokenForBooking(resolvedCode);
+        const res = await fetchBookingDetail(resolvedCode, {
+          guestToken,
+          silent: true,
+        });
+        if (!active) return;
+
+        if (res.success && res.data?.booking) {
+          const booking = res.data.booking;
+          if (
+            booking.user_id != null &&
+            user.role !== 'admin' &&
+            Number(booking.user_id) !== Number(user.id)
+          ) {
+            router.replace({
+              pathname: '/order/[id]',
+              params: { id: resolvedCode },
+            } as any);
+            return;
+          }
+          await saveBookingEntry({
+            booking_code: booking.booking_code,
+            guest_token: res.data.guest_access_token || guestToken || null,
+            recipient_email: booking.recipient_email || booking.buyer_email,
+            event_name: res.data.event?.name,
+          });
+        }
+      } catch {
+        // Let /order/[id] render guest_email verification or auth error cleanly
+      }
+
+      if (!active) return;
       router.replace({
         pathname: '/order/[id]',
         params: {
@@ -51,7 +95,7 @@ export function PaymentReturnHandler({ mode }: PaymentReturnHandlerProps) {
     return () => {
       active = false;
     };
-  }, [loading, isAuthenticated, isOfficer, resolvedCode, mode, router]);
+  }, [loading, isAuthenticated, isOfficer, user, resolvedCode, mode, router]);
 
   if (!loading && isAuthenticated && isOfficer) {
     return (

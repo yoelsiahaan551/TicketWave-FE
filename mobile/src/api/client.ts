@@ -1,3 +1,4 @@
+import { Platform } from 'react-native';
 import {
   getDefaultApiBaseUrl,
   isExplicitEnvApiUrlConfigured,
@@ -398,7 +399,7 @@ class MobileApiClient {
   async get<T = any>(
     endpoint: string,
     params: Record<string, any> = {},
-    options: { silent?: boolean } = {}
+    options: { silent?: boolean; headers?: Record<string, string> } = {}
   ): Promise<ApiResponse<T>> {
     const cleanParams: Record<string, string> = {};
     Object.entries(params || {}).forEach(([k, v]) => {
@@ -412,29 +413,93 @@ class MobileApiClient {
     return this.request<T>(url, { ...options, method: 'GET' });
   }
 
-  async post<T = any>(endpoint: string, body: any = {}): Promise<ApiResponse<T>> {
+  async post<T = any>(
+    endpoint: string,
+    body: any = {},
+    options: { silent?: boolean; headers?: Record<string, string> } = {}
+  ): Promise<ApiResponse<T>> {
     return this.request<T>(endpoint, {
+      ...options,
       method: 'POST',
       body: JSON.stringify(body),
     });
   }
 
-  async put<T = any>(endpoint: string, body: any = {}): Promise<ApiResponse<T>> {
+  async put<T = any>(
+    endpoint: string,
+    body: any = {},
+    options: { silent?: boolean; headers?: Record<string, string> } = {}
+  ): Promise<ApiResponse<T>> {
     return this.request<T>(endpoint, {
+      ...options,
       method: 'PUT',
       body: JSON.stringify(body),
     });
   }
 
-  async patch<T = any>(endpoint: string, body: any = {}): Promise<ApiResponse<T>> {
+  async patch<T = any>(
+    endpoint: string,
+    body: any = {},
+    options: { silent?: boolean; headers?: Record<string, string> } = {}
+  ): Promise<ApiResponse<T>> {
     return this.request<T>(endpoint, {
+      ...options,
       method: 'PATCH',
       body: JSON.stringify(body),
     });
   }
 
-  async delete<T = any>(endpoint: string): Promise<ApiResponse<T>> {
-    return this.request<T>(endpoint, { method: 'DELETE' });
+  async delete<T = any>(
+    endpoint: string,
+    options: { silent?: boolean; headers?: Record<string, string> } = {}
+  ): Promise<ApiResponse<T>> {
+    return this.request<T>(endpoint, { ...options, method: 'DELETE' });
+  }
+
+  private async sendMultipartUpload(
+    url: string,
+    headers: Record<string, string>,
+    formData: FormData
+  ): Promise<{ ok: boolean; status: number; data: any }> {
+    if (Platform.OS === 'web') {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers,
+        body: formData,
+      });
+      const rawData = await response.json().catch(() => ({}));
+      return { ok: response.ok, status: response.status, data: rawData };
+    }
+
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', url);
+      Object.entries(headers).forEach(([key, value]) => {
+        if (value) {
+          xhr.setRequestHeader(key, value);
+        }
+      });
+      xhr.onload = () => {
+        let parsed: any = {};
+        try {
+          parsed = xhr.responseText ? JSON.parse(xhr.responseText) : {};
+        } catch {
+          parsed = {};
+        }
+        resolve({
+          ok: xhr.status >= 200 && xhr.status < 300,
+          status: xhr.status,
+          data: parsed,
+        });
+      };
+      xhr.onerror = () => {
+        reject(new Error('Gagal mengunggah file ke server. Periksa koneksi jaringan Anda.'));
+      };
+      xhr.ontimeout = () => {
+        reject(new Error('Waktu unggah file habis (timeout).'));
+      };
+      xhr.send(formData as any);
+    });
   }
 
   async upload<T = any>(endpoint: string, formData: FormData): Promise<ApiResponse<T>> {
@@ -448,27 +513,23 @@ class MobileApiClient {
     }
 
     try {
-      const response = await fetch(url, {
-        method: 'POST',
-        headers,
-        body: formData,
-      });
-      const rawData = await response.json().catch(() => ({}));
+      const response = await this.sendMultipartUpload(url, headers, formData);
+      const rawData = response.data;
       const data = normalizeResponse(rawData);
 
       if (response.status === 401 && requestSessionVersion === this.sessionVersion) {
         const refreshed = await this.refreshToken();
         if (refreshed && requestSessionVersion === this.sessionVersion) {
           const newToken = await getStoredAccessToken();
-          const retryResponse = await fetch(url, {
-            method: 'POST',
-            headers: {
+          const retryResponse = await this.sendMultipartUpload(
+            url,
+            {
               ...headers,
               Authorization: `Bearer ${newToken}`,
             },
-            body: formData,
-          });
-          const retryRaw = await retryResponse.json().catch(() => ({}));
+            formData
+          );
+          const retryRaw = retryResponse.data;
           const retryData = normalizeResponse(retryRaw);
           if (!retryResponse.ok && !retryData.success) {
             if (retryResponse.status === 401 && requestSessionVersion === this.sessionVersion) {

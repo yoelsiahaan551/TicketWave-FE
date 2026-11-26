@@ -12,11 +12,14 @@ import {
   ArrowRight,
 } from "lucide-react";
 import api from "@/app/lib/api";
+import { useAuth } from "@/app/context/AuthContext";
 import TicketQr from "@/app/components/user/TicketQr";
 import TicketQrModal from "@/app/components/user/TicketQrModal";
 import { getTicketDisplayStatus } from "@/app/lib/payment";
 import {
   fetchAllSavedBookings,
+  fetchMyBookings,
+  getGuestTokenForBooking,
   saveBookingEntry,
 } from "@/app/lib/bookingStorage";
 
@@ -24,19 +27,32 @@ const statusStyles = {
   valid:
     "border border-emerald-200/60 bg-emerald-50 text-emerald-700 dark:border-emerald-900/50 dark:bg-emerald-950/40 dark:text-emerald-300",
   used: "border border-amber-200/60 bg-amber-50 text-amber-700 dark:border-amber-900/50 dark:bg-amber-950/40 dark:text-amber-300",
+  pending_payment:
+    "border border-amber-200/60 bg-amber-50 text-amber-700 dark:border-amber-900/50 dark:bg-amber-950/40 dark:text-amber-300",
+  expired:
+    "border border-slate-200 bg-slate-100 text-slate-700 dark:border-slate-800 dark:bg-slate-800 dark:text-slate-300",
+  sales_closed:
+    "border border-slate-200 bg-slate-100 text-slate-700 dark:border-slate-800 dark:bg-slate-800 dark:text-slate-300",
+  event_ended:
+    "border border-slate-200 bg-slate-100 text-slate-700 dark:border-slate-800 dark:bg-slate-800 dark:text-slate-300",
   cancelled:
     "border border-slate-200 bg-slate-100 text-slate-700 dark:border-slate-800 dark:bg-slate-800 dark:text-slate-300",
 };
 
 const statusLabels = {
   pending_payment: "Menunggu Pembayaran",
-  expired: "Kedaluwarsa",
+  expired: "Pembayaran Kedaluwarsa",
+  sales_closed: "Penjualan Ditutup",
   valid: "Valid / Aktif",
   used: "Sudah Digunakan",
-  cancelled: "Dibatalkan",
+  event_ended: "Acara Selesai",
+  cancelled: "Pesanan Dibatalkan",
 };
 
 export default function TicketPage() {
+  const { user, isAuthenticated, loading: authLoading } = useAuth();
+  const isAccountHistory = Boolean(isAuthenticated && user && user.role !== "officer");
+
   const [tickets, setTickets] = useState([]);
   const [loadError, setLoadError] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -44,16 +60,20 @@ export default function TicketPage() {
   const [selectedTicket, setSelectedTicket] = useState(null);
 
   const [bookingCodeInput, setBookingCodeInput] = useState("");
+  const [buyerEmailInput, setBuyerEmailInput] = useState("");
   const [lookupLoading, setLookupLoading] = useState(false);
   const [lookupError, setLookupError] = useState(null);
 
   const loadAllTickets = useCallback(async () => {
+    if (authLoading) return;
     await Promise.resolve();
     setLoading(true);
     setLoadError(null);
     setSelectedTicket(null);
     try {
-      const { bookings, errors, total } = await fetchAllSavedBookings();
+      const { bookings, errors, total } = isAccountHistory
+        ? await fetchMyBookings()
+        : await fetchAllSavedBookings();
       setLoadError(errors.length ? `${errors.length} dari ${total} kode gagal dimuat. Daftar dan jumlah hanya mencakup hasil yang berhasil dimuat. ${errors.map((error) => `${error.booking_code}: ${error.message}${error.status ? ` (HTTP ${error.status})` : ""}`).join("; ")} Gunakan Muat Ulang Tiket untuk mencoba lagi.` : null);
       const aggregated = [];
 
@@ -61,7 +81,7 @@ export default function TicketPage() {
         (tList || []).forEach((t) => {
           aggregated.push({
             ...t,
-            status: getTicketDisplayStatus(booking, t),
+            status: getTicketDisplayStatus(booking, t, event),
             booking_code: booking?.booking_code,
             booking_status: booking?.status,
             buyer_name: booking?.buyer_name,
@@ -88,34 +108,42 @@ export default function TicketPage() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [authLoading, isAccountHistory]);
 
   useEffect(() => {
+    if (authLoading) return undefined;
     const t = setTimeout(() => {
       loadAllTickets();
     }, 0);
     return () => clearTimeout(t);
-  }, [loadAllTickets]);
+  }, [authLoading, loadAllTickets]);
 
   const handleImportBooking = async (e) => {
     e.preventDefault();
     const code = bookingCodeInput.trim().toUpperCase();
+    const buyerEmail = buyerEmailInput.trim();
     if (!code) return;
 
     setLookupLoading(true);
     setLookupError(null);
     try {
-      const res = await api.get(`/checkout/${encodeURIComponent(code)}`);
+      const savedToken = getGuestTokenForBooking(code);
+      const headers = {};
+      if (savedToken) headers["X-Guest-Token"] = savedToken;
+      if (buyerEmail) headers["X-Buyer-Email"] = buyerEmail;
+      const res = await api.get(
+        `/checkout/${encodeURIComponent(code)}`,
+        {},
+        Object.keys(headers).length ? { headers } : {}
+      );
       if (!res.success || !res.data?.booking) throw new Error(res.message || "Respons pesanan tidak valid.");
       if (res.data?.booking) {
         saveBookingEntry({
           booking_code: res.data.booking.booking_code,
-          payment_url: res.data.booking.payment_url || null,
-          recipient_email:
-            res.data.booking.recipient_email || res.data.booking.buyer_email,
-          event_name: res.data.event?.name,
+          guest_token: res.data.guest_access_token || savedToken || null,
         });
         setBookingCodeInput("");
+        setBuyerEmailInput("");
         await loadAllTickets();
       }
     } catch (err) {
@@ -173,7 +201,7 @@ export default function TicketPage() {
               </p>
             </div>
 
-            <div className="flex w-full max-w-md flex-col sm:flex-row items-stretch sm:items-center gap-2">
+            <div className="flex w-full max-w-xl flex-col sm:flex-row items-stretch sm:items-center gap-2">
               <div className="relative flex-1">
                 <Search
                   size={15}
@@ -187,6 +215,13 @@ export default function TicketPage() {
                   className="w-full rounded-xl border border-slate-200 bg-white py-2 pl-9 pr-3 font-mono text-xs uppercase text-slate-900 outline-none transition focus:border-[#0080f2] focus:ring-1 focus:ring-[#0080f2] dark:border-slate-700 dark:bg-slate-800 dark:text-white dark:focus:border-[#0080f2]"
                 />
               </div>
+              <input
+                type="email"
+                value={buyerEmailInput}
+                onChange={(e) => setBuyerEmailInput(e.target.value)}
+                placeholder="Email pembeli (Guest)"
+                className="sm:w-48 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-900 outline-none transition focus:border-[#0080f2] focus:ring-1 focus:ring-[#0080f2] dark:border-slate-700 dark:bg-slate-800 dark:text-white dark:focus:border-[#0080f2]"
+              />
               <button
                 type="submit"
                 disabled={lookupLoading}
@@ -216,6 +251,10 @@ export default function TicketPage() {
             {
               id: "used",
               label: `Sudah Digunakan (${tickets.filter((t) => t.status === "used").length})`,
+            },
+            {
+              id: "event_ended",
+              label: `Acara Selesai (${tickets.filter((t) => t.status === "event_ended").length})`,
             },
             {
               id: "cancelled",
@@ -279,6 +318,8 @@ export default function TicketPage() {
                       <span className="mt-2 text-[11px] font-semibold text-slate-700">
                         {ticket.status === "used"
                           ? "Sudah Digunakan"
+                          : ticket.status === "event_ended"
+                          ? "Acara Selesai"
                           : "QR Belum Aktif"}
                       </span>
                     </div>
@@ -352,6 +393,14 @@ export default function TicketPage() {
                       className="mt-auto w-full rounded-xl border border-amber-300 bg-amber-50 px-3.5 py-2 text-xs font-medium text-amber-800 transition hover:bg-amber-100 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-300"
                     >
                       Lihat Detail (Sudah Digunakan)
+                    </button>
+                  ) : ticket.booking_status === "paid" && ticket.status === "event_ended" ? (
+                    <button
+                      type="button"
+                      onClick={() => setSelectedTicket(ticket)}
+                      className="mt-auto w-full rounded-xl border border-slate-300 bg-slate-100 px-3.5 py-2 text-xs font-medium text-slate-700 transition hover:bg-slate-200 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
+                    >
+                      Lihat Riwayat (Acara Selesai)
                     </button>
                   ) : (
                     <button

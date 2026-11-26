@@ -55,15 +55,17 @@ export function priceFromOf(event) {
   return nonNegativeNumber(event?.price_from);
 }
 
-/** Recompute phased prices from the ticket's own fields: the public route's pricing helper is miscalled. */
+/** Prefer the backend's authoritative final_price; fallback uses whole-Rupiah rounding matching Backend. */
 export function effectiveTicketPrice(t) {
+  const officialFinal = nonNegativeNumber(t?.final_price);
+  if (officialFinal !== null) return officialFinal;
   const base = nonNegativeNumber(t?.base_price);
   if (t?.active_phase) {
     const discount = nonNegativeNumber(t.active_phase.discount_percent);
     if (base === null || discount === null || discount > 100) return null;
-    return Math.round(base * (1 - discount / 100) * 100) / 100;
+    return Math.round(base * (1 - discount / 100));
   }
-  return nonNegativeNumber(t?.final_price) ?? base;
+  return base;
 }
 
 export function stockOf(t) {

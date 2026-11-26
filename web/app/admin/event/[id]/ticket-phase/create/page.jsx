@@ -66,7 +66,7 @@ function CreateTicketPhaseContent() {
         phase_name: phaseName,
         start_date: startDate,
         end_date: endDate,
-        discount_percent: Number(discount),
+        discount_percent: parseFloat(discount),
       });
       router.push(
         `/admin/event/${eventId}/ticket-phase?ticketTypeId=${ticketTypeId}`
@@ -186,6 +186,7 @@ function CreateTicketPhaseContent() {
                 <div className="flex items-center gap-2.5">
                   <input
                     type="number"
+                    step="0.01"
                     min={0}
                     max={100}
                     required

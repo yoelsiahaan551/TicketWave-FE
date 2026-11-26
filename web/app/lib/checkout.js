@@ -20,12 +20,26 @@ export function reconcileCheckout(selection, response) {
   if (typeof price !== 'number' || !Number.isFinite(price) || price < 0) {
     throw new Error('Harga tiket belum dapat diverifikasi.');
   }
+  const basePrice = typeof type.base_price === 'number' && Number.isFinite(type.base_price) ? type.base_price : price;
+  const discountAmount = typeof type.discount_amount === 'number' && Number.isFinite(type.discount_amount)
+    ? type.discount_amount
+    : Math.max(0, basePrice - price);
   return {
     ...selection,
     eventNama: detail.event.name,
     eventTanggal: detail.event.event_date,
     venue: detail.event.venue,
     lokasi: detail.event.city,
-    items: [{ ...selected[0], id: type.id, ticket_type_id: type.id, nama: type.name, harga: price, jumlah: quantity }],
+    items: [{
+      ...selected[0],
+      id: type.id,
+      ticket_type_id: type.id,
+      nama: type.name,
+      base_price: basePrice,
+      harga: price,
+      discount_amount: discountAmount,
+      active_phase: type.active_phase || null,
+      jumlah: quantity,
+    }],
   };
 }

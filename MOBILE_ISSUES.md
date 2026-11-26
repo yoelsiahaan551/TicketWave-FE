@@ -2,7 +2,7 @@
 
 **Lokasi File:** `C:\Users\LOQ\Documents\TicketWave\TicketWave-FE\MOBILE_ISSUES.md`  
 **Komponen:** Mobile Expo (`TicketWave-FE/Mobile`) & Backend Flask (`TicketWave-BE`)  
-**Terakhir Diperbarui:** 21 November 2026  
+**Terakhir Diperbarui:** 26 November 2026  
 
 ## 1. Tujuan Dokumen
 
@@ -75,7 +75,7 @@ npx expo start --tunnel
 | **MOBILE-ISSUE-01** | Request API Mobile ke Backend lokal mengalami timeout | Local Backend Binding / Windows Firewall / LAN Networking | **P1** *(dev lokal)* | **RESOLVED** |
 | **MOBILE-ISSUE-02** | `npx expo start` mode LAN timeout di HP fisik & ketergantungan pada `EXPO_PUBLIC_API_URL` manual | Windows Firewall `Block` Precedence (`node.exe`) / Expo Go LAN Host Resolution | **P1** *(dev lokal)* | **CODE RESOLVED — FIREWALL BLOCKER IDENTIFIED (PHYSICAL DEVICES NOT TESTED)** |
 | **MOBILE-ISSUE-03** | Alur pembayaran Mobile belum mengikuti integrasi Midtrans Sandbox Backend | Mobile Checkout / Midtrans Sandbox / Order Sync | **P1** | **PARTIALLY VERIFIED — ANDROID EMULATOR & EXPO WEB PASS, PHYSICAL ANDROID/IOS NOT TESTED** |
-| **MOBILE-ISSUE-04** | Gap integrasi Guest, User, Officer, Admin, Expo Web SSR hydration, serta aturan acara selesai | Auth Role Isolation / Officer QR / Admin CRUD / Midtrans Return / Backend Parity | **P1** | **MOBILE RESOLVED & EXPO WEB E2E PASS — PHYSICAL DEVICES NOT TESTED & BE BLOCKERS OPEN** |
+| **MOBILE-ISSUE-04** | Penyelarasan penuh fitur & integrasi Mobile (Guest, User, Checkout/Midtrans, Orders/QR, Admin, Officer QR Image Scan) dengan Next.js & Backend Flask aktual | Parity & Multi-Role Integration | **P1** | **MOBILE PARITY IMPLEMENTED & EXPO WEB E2E VERIFIED — CLOUDINARY ENV (503) & PHYSICAL/EMULATOR HARDWARE NOT TESTED** |
 
 ---
 
@@ -379,9 +379,147 @@ Seluruh data uji memakai prefiks `[TEST-MOBILE]` dan telah dibersihkan kembali; 
 | **Physical iPhone** | **NOT TESTED** | Tidak ada perangkat iPhone fisik / simulator macOS yang terhubung serta blocker Firewall `node.exe` `8081` (`MOBILE-ISSUE-02`); manifest LAN `192.168.1.4:8081` (`hostUri`) terverifikasi via HTTP. |
 
 ### Blocker Backend & Lingkungan yang Masih Terbuka
-1. **Upload Media (`ISSUE-03`):** `POST /api/agencies/<id>/logo`, `/api/events/<id>/poster`, `/api/events/<id>/banner` masih gagal di Backend tanpa kredensial Cloudinary valid.
-2. **Endpoint Akun/Manajemen yang Belum Ada (`ISSUE-04`, `ISSUE-05`, `ISSUE-06`, `ISSUE-07`, `ISSUE-11`, `ISSUE-12`, `ISSUE-14`, `ISSUE-15`):** Tidak ada `GET /api/checkout/my-bookings`, `GET /api/users`, agregasi omzet Admin, penugasan gate Officer, filter kategori event di BE, SMTP email aktif, `PUT /api/auth/me`, maupun `POST /api/auth/logout`.
-3. **Kalkulasi Harga Katalog Publik (`ISSUE-08`):** `GET /api/public/events` dan `GET /api/public/events/<id>` masih memanggil `calculate_final_price(float, int)` (`price_from`/`final_price: null` saat fase diskon aktif; Mobile melakukan kalkulasi ulang defensif sementara `POST /api/checkout` di BE sudah memiliki fallback `ticket_type.id`).
-4. **Webhook Midtrans Localhost (`ISSUE-10`):** Webhook server-to-server `/api/checkout/payment/notification` terblokir di localhost tanpa HTTPS publik; di Sandbox diverifikasi via `POST .../sync-payment-status`.
-5. **Validasi Pasca-Acara pada Officer Scan:** Backend `scan_routes.py` belum menolak validasi dan check-in untuk tiket acara yang sudah `finished` atau tanggalnya telah berakhir.
-6. **Windows Firewall Metro Port `8081` (`MOBILE-ISSUE-02`):** Masih memerlukan eksekusi perintah PowerShell Administrator untuk mengubah `Block Private` `node.exe` menjadi `Allow` sebelum uji langsung di Android/iPhone fisik.
+1. **Kredensial Media Cloudinary Lingkungan Lokal:** Endpoint Backend `/api/agencies/<id>/logo`, `/api/events/<id>/poster`, `/api/events/<id>/banner` sudah terpasang dan memvalidasi berkas, namun pada `.env` host uji saat `25 November 2026`, `is_cloudinary_configured()` bernilai `False` sehingga permintaan upload mengembalikan `HTTP 503` (`"Layanan upload media (Cloudinary) belum terkonfigurasi dengan lengkap."`).
+2. **Webhook Midtrans Localhost (`ISSUE-10`):** Webhook server-to-server `/api/checkout/payment/notification` tidak dapat menjangkau `localhost` tanpa HTTPS publik; di Sandbox diverifikasi via `POST /api/checkout/<code>/sync-payment-status`.
+3. **Endpoint Manajemen Opsional yang Memang Tidak Tersedia di Backend (`ISSUE-05`, `ISSUE-06`, `ISSUE-07`, `ISSUE-11`):** Next.js dan Mobile sama-sama menangani ketiadaan `GET /api/users`, laporan agregat omzet Admin, maupun penugasan gate/shift Officer secara read-only fallback yang jujur.
+4. **Windows Firewall Metro Port `8081` (`MOBILE-ISSUE-02`):** Masih memerlukan aturan `Allow` pada profil `Private` untuk `node.exe` sebelum uji langsung di Android/iPhone fisik.
+
+---
+
+## 11. Audit Paritas Penuh Mobile vs Next.js (`25 November 2026`)
+
+### Ringkasan Perubahan Paritas yang Diterapkan di Mobile
+1. **API Client, Auth & Token Revocation (`src/api/client.ts`, `src/api/endpoints.ts`, `src/context/AuthContext.tsx`, `src/utils/storage.ts`, `src/types/index.ts`):**
+   - Menambahkan dukungan header opsional (`X-Guest-Token`, `X-Buyer-Email`) pada `get`/`post`/`put`/`patch`/`delete`, `logoutApi` (`POST /api/auth/logout` dengan pencabutan access & refresh token di Backend), dan `fetchMyBookings()` (`GET /api/checkout/my-bookings`).
+   - Menyimpan `guest_access_token` (`guest_token`) per kode booking dan menghapus fallback `payment_url` lokal.
+   - Memperbaiki `appendMediaFile()` agar data URI Web (`data:image/png;base64,...`) dikirim dengan ekstensi file valid (`logo.png`, `poster.png`, `banner.png`) dan `Blob` MIME yang sesuai.
+2. **Kalkulasi Harga, Jadwal Berakhir WIB & Aturan Status Pembayaran/Tiket (`src/utils/formatters.ts`, `src/utils/payment.ts`, `src/components/common/Badge.tsx`):**
+   - `effectiveTicketPrice()` memprioritaskan `final_price` resmi Backend (termasuk diskon pecahan seperti `12.5%` -> `Rp87.500`), lalu fallback hanya bila null.
+   - `isEventOfficiallyEnded()` dan `formatEventSchedule()` mendukung `is_event_ended` Backend dan `event_end_time` zona WIB (`HH:mm – HH:mm WIB`).
+   - Menambahkan `resolveOrderPaymentState()` dan `resolveTicketDisplayStatus()` dengan prioritas identik Next.js (`paid` -> `Dibayar`; `cancelled` -> `Pesanan Dibatalkan`; `event_ended` -> `Acara Selesai`; `expired` -> `Pembayaran Kedaluwarsa`; `sales_closed` -> `Penjualan Ditutup`; `pending_payment` -> `Menunggu Pembayaran`) + deskripsi resmi dan penyembunyian aksi bayar/batal/sync ketika tidak memenuhi syarat.
+3. **Guest, User, Checkout & Midtrans Return (`landing.tsx`, `event/[id].tsx`, `checkout.tsx`, `(tabs)/orders.tsx`, `order/[id].tsx`, `(tabs)/tickets.tsx`, `OrderCard.tsx`, `TicketCard.tsx`, `QRCodeModal.tsx`, `PaymentReturnHandler.tsx`):**
+   - `Cek Pesanan` dan impor booking mendukung input opsional `Email Pembeli` (`X-Buyer-Email`) serta prompt verifikasi `requires_verification === "guest_email"` / redirect `login` di `/order/[id]`.
+   - User login memuat riwayat pesanan & tiket lintas perangkat dari `GET /api/checkout/my-bookings`.
+   - Ringkasan checkout & detail pesanan menampilkan `Harga Normal`, `Diskon Fase`, dan `Total Pembayaran` konsisten dengan Backend; tiket dari event selesai tetap tersimpan di riwayat dengan status `Acara Selesai` (`QR Nonaktif`) sementara status pembayaran tetap `Dibayar`.
+   - Seluruh area User (`Profil`, `Pesanan Saya`, `Tiket Saya`) dipertahankan strictly read-only.
+4. **Admin Media Validation & Tampilan Poster Terpisah (`src/utils/mediaValidation.ts`, `admin/agency/{create,[id]/edit}.tsx`, `admin/event/{create,[id]/index,[id]/edit}.tsx`):**
+   - Menambahkan validasi format (`jpeg, jpg, png, webp`) & ukuran maks `5MB` sebelum pratinjau/upload (menangani pula penolakan Web `expo-image-picker` atas `text/plain` tanpa crash/redbox serta mempertahankan pratinjau lama).
+   - Menambahkan input `event_end_time` (`Jam Selesai (WIB, Opsional)`) pada Create & Edit Event serta kartu terpisah **`Poster Acara`** (`resizeMode="contain"`, potret utuh tanpa crop) di `/admin/event/[id]`.
+5. **Officer Pindai Gambar QR (`app/officer/scan.tsx`, `app/officer/events.tsx`):**
+   - Menambahkan fitur **Pindai Gambar QR** (`Pilih & Pindai Gambar QR`) menggunakan `jsqr` + canvas (Expo Web) dan `expo-camera` `scanFromURLAsync` (native), meneruskan token ke validasi read-only `POST /api/scan/validate` tanpa auto check-in, serta membersihkan label internal usang (`ISSUE-07`).
+
+### Matriks Paritas Next.js -> Mobile -> Endpoint -> Per-Platform (`25 November 2026`)
+*Catatan: Kolom platform membedakan status uji E2E aktual; `API Integration` pada Mobile sudah selaras penuh untuk seluruh target.*
+
+| Role / Fitur | Halaman Next.js | Layar Mobile | Endpoint Backend | Expo Web (`localhost:8081`) | Android Emulator | Physical Android | Physical iPhone |
+|---|---|---|---|---|---|---|---|
+| **Guest — Landing, Katalog, Cari & Filter** | `/`, `/user/event` | `/landing`, `/(tabs)/events` | `GET /api/public/events`, `/cities` | **PASS** | `NOT TESTED` *(tidak ada AVD)* | `NOT TESTED` *(tidak ada device)* | `NOT TESTED` *(tidak ada device)* |
+| **Guest — Detail Konser/Festival & Harga Diskon Pecahan** | `/user/event/[id]` | `/event/[id]` | `GET /api/public/events/<id>` | **PASS** | `NOT TESTED` | `NOT TESTED` | `NOT TESTED` |
+| **Guest — Checkout & Kembali dari Midtrans tanpa Duplikat** | `/user/checkout`, `/payment/*` | `/checkout`, `/payment/*`, `/order/[id]` | `POST /api/checkout`, `GET /api/checkout/<code>` | **PASS** *(Midtrans Sandbox Snap dibuka & kembali ke `TKTW-20261125-E602A3`)* | `NOT TESTED` *(teruji di sesi 20 Nov sebelum parity update)* | `NOT TESTED` | `NOT TESTED` |
+| **Guest — Cek Pesanan Lintas Sesi (`X-Buyer-Email` / `X-Guest-Token`)** | `/user/pesanan` modal/lookup, `/user/pesanan/[id]` | `/landing` modal, `/(tabs)/orders`, `/order/[id]` | `GET /api/checkout/<code>` | **PASS** *(401 `guest_email` -> prompt -> unlock dgn email pembeli)* | `NOT TESTED` | `NOT TESTED` | `NOT TESTED` |
+| **User — Register, Login, Refresh, Logout Revocation & Reset Password** | `/register`, `/login`, `/user/profile` | `/register`, `/login`, `/(tabs)/profile`, `/settings` | `POST /api/auth/{register,login,logout,refresh}`, `GET /verify-email/<tok>` | **PASS** *(+ verifikasi API: token & refresh token ditolak `401` pasca `/logout`)* | `NOT TESTED` | `NOT TESTED` | `NOT TESTED` |
+| **User — Riwayat Lintas Perangkat, Status Pembayaran/Tiket, QR & Read-Only** | `/user/pesanan`, `/user/pesanan/[id]`, `/user/ticket`, `/user/profile` | `/(tabs)/orders`, `/order/[id]`, `/(tabs)/tickets`, `/(tabs)/profile` | `GET /api/checkout/my-bookings`, `POST .../cancel`, `POST .../sync-payment-status` | **PASS** *(`Dibayar`, `Pembayaran Kedaluwarsa`, `Acara Selesai`, QR aktif & nonaktif pasca-event)* | `NOT TESTED` | `NOT TESTED` | `NOT TESTED` |
+| **Admin — Agency CRUD, Event Create/Edit/Status/`event_end_time`, Phases CRUD** | `/admin/*` | `/admin/*` | `GET/POST/PUT/PATCH/DELETE /api/{agencies,events,phases}` | **PASS** | `NOT TESTED` | `NOT TESTED` | `NOT TESTED` |
+| **Admin — Validasi Media Format/Ukuran & Retensi Preview** | `/admin/agency/*`, `/admin/event/*` | `/admin/agency/{create,[id]/edit}`, `/admin/event/{create,[id]/*}` | Validasi client pre-upload | **PASS** *(`.txt` & `>5MB` ditolak inline tanpa menghapus preview lama)* | `NOT TESTED` | `NOT TESTED` | `NOT TESTED` |
+| **Admin — Upload Logo/Poster/Banner ke Cloudinary** | `/admin/agency/*`, `/admin/event/*` | `/admin/agency/*`, `/admin/event/*` | `POST /api/agencies/<id>/logo`, `/events/<id>/{poster,banner}` | **BLOCKED (ENV)** *(`HTTP 503` karena Cloudinary `.env` host tidak terkonfigurasi; payload FormData `.png` valid sampai ke Flask)* | `NOT TESTED` | `NOT TESTED` | `NOT TESTED` |
+| **Admin — Tampilan Banner Hero + Kartu `"Poster Acara"` Utuh Potret** | `/admin/event/[id]` | `/admin/event/[id]` | `GET /api/events/<id>` | **PASS** *(diverifikasi pada event #14 ber-URL Cloudinary dengan 0 console error)* | `NOT TESTED` | `NOT TESTED` | `NOT TESTED` |
+| **Officer — Dashboard, Assigned Events Fallback, History & Role Isolation** | `/officer`, `/officer/events`, `/officer/history` | `/officer/index`, `/officer/events`, `/officer/history` | `GET /api/scan/{stats,history}`, `POST /api/auth/logout` | **PASS** | `NOT TESTED` | `NOT TESTED` | `NOT TESTED` |
+| **Officer — Scan Manual, Validasi Read-Only, Check-In, 409 & Post-Event Reject** | `/officer/scan`, `/officer/validation` | `/officer/scan`, `/officer/validation` | `POST /api/scan/{validate,check-in}` | **PASS** | `NOT TESTED` | `NOT TESTED` | `NOT TESTED` |
+| **Officer — Pindai Gambar QR** | `/officer/scan` (`html5-qrcode`) | `/officer/scan` (`jsqr` web / `scanFromURLAsync` native) | `POST /api/scan/validate` | **PASS** *(`test-qr-ended.png` -> `400`; `test-qr-valid.png` -> `200 VALID` tanpa auto check-in -> check-in -> `409`)* | `NOT TESTED` | `NOT TESTED` | `NOT TESTED` |
+| **Officer — Kamera Langsung** | `/officer/scan` | `/officer/scan` (`expo-camera` `CameraView`) | `POST /api/scan/validate` | **PARTIAL** *(UI fallback izin kamera di headless browser; tidak ada optik kamera fisik)* | `NOT TESTED` | `NOT TESTED` | `NOT TESTED` |
+
+### Verifikasi Teknis Terbaru (`25 November 2026`)
+- `npm run test:utils` (`TicketWave-FE/Mobile`): **8/8 PASS** (0 gagal).
+- `npx tsc --noEmit` (`TicketWave-FE/Mobile`): **PASS** (0 error).
+- `npx eslint .` (`TicketWave-FE/Mobile`): **PASS** (0 error, 0 warning).
+- `cleanup_e2e_fixtures.py`: Seluruh data uji `[TEST-MOBILE-...]` telah dibersihkan dari `TicketWave-BE/instance/dev.db`; data demo bawaan tetap utuh.
+
+---
+
+## 12. Verifikasi Lanjutan Cloudinary & Native Android Emulator (`26 November 2026`)
+
+### A. Diagnosa Upload Media Cloudinary (`BLOCKED` — Kredensial Kosong)
+- Pemeriksaan pada `TicketWave-BE/app/config/cloudinary_config.py` (`is_cloudinary_configured()` & `init_cloudinary(app)`), `TicketWave-BE/app/config/config.py` (`load_dotenv`), dan `TicketWave-BE/app/__init__.py` menunjukkan mekanisme pemuatan konfigurasi Flask berjalan benar (tidak ada bug parsing).
+- Penyebab `HTTP 503` (`"Layanan upload media (Cloudinary) belum terkonfigurasi dengan lengkap."`) adalah ketiga variabel kredensial pada file `C:\Users\LOQ\Documents\TicketWave\TicketWave-BE\.env` masih kosong (`len=0`), dan tidak ada nilai pada environment Windows User maupun Machine (`CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, `CLOUDINARY_API_SECRET`, `CLOUDINARY_URL` seluruhnya kosong).
+- **Variabel yang perlu diisi oleh pengguna** pada `C:\Users\LOQ\Documents\TicketWave\TicketWave-BE\.env` (tanpa nilai rahasia ditampilkan di laporan):
+  - `CLOUDINARY_CLOUD_NAME`
+  - `CLOUDINARY_API_KEY`
+  - `CLOUDINARY_API_SECRET`
+- Setelah diisi dan Flask di-restart, upload logo agency, banner event, dan poster event baru dari UI Admin perlu diuji ulang end-to-end hingga URL baru tersimpan setelah reload.
+
+### B. Bug Native Android yang Ditemukan, Diperbaiki, dan Diuji Ulang (`Medium_Phone_API_36.0`)
+1. **BUG-ANDROID-01 (`FIXED & RETESTED`) — `Unsupported FormDataPart implementation` saat Upload Multipart di Expo SDK 58 / RN 0.88:**
+   - **Gejala:** Saat Admin memilih gambar PNG valid lewat Android Photo Picker pada `/admin/event/14` (`Upload Poster`), `fetch(url, { method: 'POST', body: formData })` melempar error klien `"Gagal mengunggah poster: Unsupported FormDataPart implementation"` (dari `expo/build/winter/fetch/convertFormData.js:61` yang menolak objek `{ uri, name, type }` milik RN `FormData`) sebelum request sempat mencapai Flask.
+   - **Perbaikan (`TicketWave-FE/Mobile/src/api/client.ts`):** Menambahkan helper `sendMultipartUpload()` yang menggunakan `XMLHttpRequest` pada platform native (`Platform.OS !== 'web'`) sementara tetap memakai `fetch` pada Web, termasuk retry 401 refresh token.
+   - **Bukti Retest Android Emulator (`00:34:10`):** Memilih PNG valid lewat Android Photo Picker -> tombol berubah menjadi `Mengunggah...` -> multipart request benar-benar mencapai Flask (`POST /api/events/14/poster HTTP/1.1 503`) -> UI menampilkan pesan Backend `"Gagal mengunggah poster: Layanan upload media (Cloudinary) belum terkonfigurasi dengan lengkap."`, sementara Banner hero dan kartu `"Poster Acara"` potret utuh tetap utuh tanpa terhapus.
+2. **BUG-ANDROID-02 (`FIXED & RETESTED`) — Penutupan Chrome Custom Tab Kembali ke Expo Go Home (`HomeActivity`):**
+   - **Gejala:** Saat Chrome Custom Tab Midtrans ditutup (`X`) di Expo Go Android, `BrowserProxyActivity` (`createTask: true` default `expo-web-browser`) memicu `LAUNCH_SINGLE_TASK` ke `host.exp.exponent/.experience.HomeActivity` alih-alih kembali ke `ExperienceActivity` (`TicketWave-Mobile`).
+   - **Perbaikan (`TicketWave-FE/Mobile/src/utils/payment.ts`):** Menambahkan opsi `createTask: false` pada `WebBrowser.openBrowserAsync()` agar Chrome Custom Tab berjalan dalam task stack yang sama dengan aplikasi.
+   - **Bukti Retest Android Emulator (`00:41`, `TKTW-20261125-BCF777`):** Menutup Chrome Custom Tab Midtrans Sandbox dengan tombol `X` langsung mengembalikan pengguna ke layar `Detail Pesanan` (`TKTW-20261125-BCF777`) di dalam `TicketWave-Mobile` dengan status `Menunggu Pembayaran` dan banner instruksi `"Anda kembali dari halaman pembayaran Midtrans. Jika sudah menyelesaikan transaksi, tekan 'Periksa Status Pembayaran'."`.
+3. **OBSERVASI-ANDROID-03 (`KNOWN LIMITATION / BACKEND CALLBACK`) — Redirect `callbacks.finish` Midtrans Snap ke `http://localhost:3000` di Chrome Custom Tab:**
+   - **Gejala:** Setelah transaksi QRIS Sandbox (`TKTW-20261125-A08EDA`, `Rp87.500`) dibayar via Midtrans Sandbox Simulator dan tombol `Check status` di halaman Snap ditekan, Midtrans Snap mengarahkan Chrome Custom Tab ke `http://localhost:3000/payment/finish?booking_code=TKTW-20261125-A08EDA` (`FRONTEND_URL` Backend), yang menghasilkan `ERR_CONNECTION_REFUSED` di dalam Chrome perangkat/emulator Android.
+   - **Mitigasi Saat Ini & Hasil Verifikasi:** Dengan `createTask: false`, menutup tab langsung mengembalikan pengguna ke Detail Pesanan; menekan `Periksa Status Pembayaran` (`POST /api/checkout/TKTW-20261125-A08EDA/sync-payment-status`) berhasil memperbarui status menjadi **`Dibayar`** dan mengaktifkan **`E-TICKET QR PASS`** (`TKT-95C6AD85`, `Status: VALID / AKTIF`). Untuk UX native ideal tanpa halaman `localhost:3000` error, Backend perlu mendukung callback URL berbasis mobile/return page (mis. `GET /api/checkout/payment-return` dengan tautan deep link ke aplikasi).
+
+### C. Matriks Hasil Uji Per-Alur & Per-Platform (`26 November 2026`)
+*Lingkungan Native Teruji: AVD `Medium_Phone_API_36.0` (`emulator-5554`, `ANDROID_AVD_HOME=%USERPROFILE%\.android\avd`) terhubung ke Flask lokal (`http://10.0.2.2:5000/api`) dan Metro (`adb reverse tcp:8081 tcp:8081`).*
+
+| Alur / Fitur | Expo Web (`localhost:8081`) | Android Emulator (`Medium_Phone_API_36.0`) | Physical Android | Physical iPhone | Bukti Utama (`26 Nov 2026`) |
+|---|---|---|---|---|---|
+| **Konektivitas ke Flask Backend** | **PASS** | **PASS** | `NOT TESTED` | `NOT TESTED` | Emulator terhubung ke `http://10.0.2.2:5000/api` (`200 OK` di log Flask). |
+| **Guest — Landing, Katalog & Pencarian** | **PASS** | **PASS** | `NOT TESTED` | `NOT TESTED` | Landing memuat `SoundWave Summer Fest 2026` (`Rp1.200.000`), filter kota `Bandung`/`Jakarta`; pencarian `Diskon Pecahan` menampilkan `Rp87.500`. |
+| **User — Login & Logout Token Revocation** | **PASS** | **PASS** | `NOT TESTED` | `NOT TESTED` | Login `mobile.parity.user@ticketwave.test` -> Home `Halo, Mobile!`; Logout -> `POST /api/auth/logout 200` -> kembali ke Landing. |
+| **User — Riwayat Pesanan, Status Pembayaran & Read-Only** | **PASS** | **PASS** | `NOT TESTED` | `NOT TESTED` | `GET /api/checkout/my-bookings 200`; `MOBPAID` (`Dibayar`), `MOBEXP1` (`Pembayaran Kedaluwarsa`), `MOBENDU` (`Acara Selesai`), `MOBENDP` (`Dibayar`, tiket `ACARA SELESAI` + `QR Nonaktif`); tab Profil tanpa aksi Edit/Hapus. |
+| **Checkout & Midtrans Sandbox -> Verifikasi `Dibayar` + QR** | **PASS** | **PASS** *(catatan redirect `localhost:3000` pada `callbacks.finish`)* | `NOT TESTED` | `NOT TESTED` | `TKTW-20261125-A08EDA` (`Rp87.500`, QRIS) membuka `app.sandbox.midtrans.com` di Chrome Custom Tab -> dibayar di Sandbox Simulator -> `Periksa Status Pembayaran` -> **`Dibayar`** & modal QR `TKT-95C6AD85` aktif. Retest tutup Custom Tab (`TKTW-20261125-BCF777`) kembali langsung ke `Detail Pesanan` (`Menunggu Pembayaran`). |
+| **Admin — Dashboard, List & Detail Event (Banner + Poster Potret Utuh)** | **PASS** | **PASS** | `NOT TESTED` | `NOT TESTED` | `/admin/event/14` menampilkan Banner hero landscape dan kartu terpisah `"Poster Acara"` potret utuh tanpa crop di Android native. |
+| **Admin — Upload Media (Logo/Banner/Poster ke Cloudinary)** | **BLOCKED** *(ENV Cloudinary)* | **BLOCKED** *(ENV Cloudinary; bug klien `FormDataPart` telah diperbaiki)* | `NOT TESTED` | `NOT TESTED` | Setelah fix `XMLHttpRequest`, Android Photo Picker -> `POST /api/events/14/poster` mencapai Flask dan menerima `HTTP 503` (`Layanan upload media (Cloudinary) belum terkonfigurasi dengan lengkap.`), preview lama tetap utuh. |
+| **Officer — Kamera Langsung (`CameraView`)** | **PARTIAL** *(headless browser)* | **PASS (Preview Kamera)** / **NOT TESTED (Optik QR Fisik)** | `NOT TESTED` | `NOT TESTED` | Izin kamera aktif, pratinjau `CameraView` virtual scene Android Emulator + overlay garis pindai tampil (`Mode: Kamera Aktif`), tombol senter/balik kamera/suara tersedia. Pindai optik QR fisik memerlukan perangkat dengan kamera nyata. |
+| **Officer — Pindai Gambar QR dari Galeri (`scanFromURLAsync`)** | **PASS** (`jsqr`) | **PASS** (`scanFromURLAsync`) | `NOT TESTED` | `NOT TESTED` | `qr-valid.png` (`TKT--MOBPAID`) -> `POST /api/scan/validate 200` -> **`VALID`** tanpa auto check-in -> `Buka Validator` -> `Konfirmasi Check-In Pengunjung` -> `POST /api/scan/check-in 200` (`CHECK-IN SELESAI`) -> validasi ulang -> `HTTP 409` (`SUDAH DIGUNAKAN`). `qr-ended.png` (`TKT--MOBENDP`) -> `HTTP 400` (`TIDAK VALID` — `Acara telah selesai`). |
+
+### D. Blocker & Langkah Uji untuk Perangkat Fisik (iPhone & Android Fisik)
+1. **Blocker Lingkungan Saat Ini:**
+   - **iPhone Fisik / iOS Simulator:** Host berjalan di **Windows** (tidak tersedia Xcode / iOS Simulator), dan tidak ada perangkat iPhone maupun Android fisik yang terhubung saat sesi uji (`adb devices` hanya menampilkan `emulator-5554`).
+   - **Windows Firewall Port `8081` (`MOBILE-ISSUE-02`):** Koneksi Expo Go dari iPhone/Android fisik lewat LAN Wi-Fi (`exp://<IP-LAN>:8081`) memerlukan izin inbound TCP port `8081` (dan `5000` untuk Flask) pada profil jaringan `Private`.
+2. **Langkah yang Perlu Dilakukan Pengguna di iPhone / Android Fisik:**
+   - Pastikan laptop dan HP berada pada jaringan Wi-Fi yang sama (`Private network`).
+   - Izinkan inbound TCP `8081` (Node/Expo Metro) dan `5000` (Python/Flask) pada Windows Defender Firewall (profil `Private`).
+   - Pastikan Flask berjalan di `0.0.0.0:5000` dan Metro berjalan (`npx expo start --port 8081`), lalu pindai QR Expo Go di iPhone (aplikasi **Expo Go** SDK 58 / kamera iOS) atau masukkan URL `exp://<IP-LAN-LAPTOP>:8081`.
+   - Di iOS, setujui izin **Local Network** dan **Camera** / **Photos** saat diminta; uji Landing, Login, Checkout Midtrans (`SFSafariViewController`), Admin Upload Media (setelah Cloudinary `.env` diisi), dan Officer Scan Kamera fisik + Galeri.
+
+### E. Verifikasi Teknis Setelah Perbaikan Native (`26 November 2026`)
+- `npm run test:utils` (`TicketWave-FE/Mobile`): **8/8 PASS** (0 gagal).
+- `npx tsc --noEmit` (`TicketWave-FE/Mobile`): **PASS** (`exit 0`).
+- `npx eslint .` (`TicketWave-FE/Mobile`): **PASS** (`exit 0`, 0 error, 0 warning).
+- Pembersihan `TicketWave-BE/instance/dev.db`: Seluruh data uji `[TEST-MOBILE-*]`, `TKTW-20261125-MOB*`, `TKTW-20261125-A08EDA`, dan `TKTW-20261125-BCF777` dibersihkan (`15` event & `10` agency bawaan tetap utuh).
+
+---
+
+## 13. Audit Lanjutan: Callback Midtrans Terjangkau Perangkat & Retest Poster (`26 November 2026`)
+
+### A. Perbaikan Callback Midtrans (`OBSERVASI-ANDROID-03` -> `RESOLVED IN CODE & VERIFIED ON WEB / LAN / UNIT`)
+- **Akar Masalah:** `TicketWave-BE/app/modules/ticket/checkout_routes.py` sebelumnya selalu mengisi `callbacks.finish/error/pending` dengan `FRONTEND_URL` (`http://localhost:3000/payment/finish`), sehingga Expo Web (`:8081`/`:8085`) dialihkan ke port Next.js dan perangkat Android/iPhone mengalami `ERR_CONNECTION_REFUSED` terhadap `localhost:3000`.
+- **Perbaikan Backend (`TicketWave-BE/app/modules/ticket/schema.py`, `checkout_routes.py`, `tests/test_checkout_midtrans.py`):**
+  - Menambahkan field opsional `return_url` pada `CheckoutSchema` (tanpa mengubah perilaku default Next.js bila `return_url` tidak dikirim).
+  - Menambahkan route bridge read-only **`GET /api/checkout/payment/return`** dengan validasi ketat `booking_code` dan allowlist scheme/host (`ticketwavemobile://`, `exp://`, `exps://`, origin lokal/LAN/FRONTEND_URL; menolak open-redirect eksternal maupun `javascript:`).
+  - Saat Mobile native mengirim `return_url` deep link (`exp://...` atau `ticketwavemobile://...`), Midtrans Snap diarahkan ke `{origin-backend-terjangkau}/api/checkout/payment/return?booking_code=...&app_url=...` (mis. `http://10.0.2.2:5000/...` pada Android Emulator atau `http://<IP-LAN>:5000/...` pada HP fisik), yang lalu mengembalikan pengguna ke pesanan yang sama tanpa pernah memercayai query string untuk menandai lunas.
+  - Saat Expo Web mengirim `return_url` (`http://localhost:8085/payment/finish`), Midtrans Snap diarahkan langsung ke origin Expo Web tersebut.
+- **Perbaikan Mobile (`Mobile/src/types/index.ts`, `src/utils/payment.ts`, `app/checkout.tsx`, `app/order/[id].tsx`, `app/(tabs)/orders.tsx`, `scripts/verify-mobile-utils.mjs`):**
+  - Menambahkan `buildMobilePaymentReturnUrl()` dan `getMobilePaymentReturnUrl()` (`window.location.origin + '/payment/finish'` di Web, `ExpoLinking.createURL('/payment/finish')` di Native) serta mengirimkannya sebagai `return_url` pada `POST /api/checkout`.
+  - Memperbarui `openMidtransPaymentBrowser()` agar memakai `WebBrowser.openAuthSessionAsync(officialUrl, returnUrl, { createTask: false, ... })` pada Native sehingga redirect balik dari bridge otomatis menutup browser dan kembali ke `/order/<booking_code>` yang sama tanpa booking duplikat.
+
+### B. Hasil Uji Ulang Poster Cloudinary & Callback Midtrans (`26 November 2026`)
+1. **Upload Poster Cloudinary (`BLOCKED — ENV`):**
+   - Pemeriksaan ulang `TicketWave-BE/.env` menunjukkan `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, dan `CLOUDINARY_API_SECRET` masih kosong (`len=0`).
+   - Retest live UI pada `/admin/event/14` (`Upload Poster` dengan berkas PNG valid `test-poster.png`) mencapai Flask (`POST /api/events/14/poster -> HTTP 503 SERVICE UNAVAILABLE`), menampilkan pesan `"Gagal mengunggah poster: Layanan upload media (Cloudinary) belum terkonfigurasi dengan lengkap."` tanpa crash, dan mempertahankan Banner hero serta pratinjau `"Poster Acara"` potret utuh.
+2. **Callback Midtrans & Kembali ke Pesanan yang Sama (`PASS` di Expo Web & LAN Bridge; `NOT TESTED` di HP Fisik):**
+   - Checkout User (`TKTW-20261126-7590B1`, Virtual Account Permata `Rp250.000`) -> dibayar nyata via `simulator.sandbox.midtrans.com` -> Midtrans Snap mencoba redirect langsung ke `http://localhost:8085/payment/finish?booking_code=TKTW-20261126-7590B1...` (bukan lagi `localhost:3000`).
+   - Bridge `GET http://192.168.1.4:5000/api/checkout/payment/return?...` (IP LAN) dan `GET http://127.0.0.1:5000/api/checkout/payment/return?...&transaction_status=settlement` mengembalikan `HTTP 200`, otomatis mengarahkan lewat `/payment/finish` ke `/order/TKTW-20261126-7590B1`, tetap read-only (`Menunggu Pembayaran` & `QR Nonaktif`) sebelum sinkronisasi, lalu tombol `"Periksa Status Pembayaran"` memperbarui ke **`Dibayar`** (`Virtual Account Permata`), mengaktifkan QR `TKT-618EE8AB`, dengan tepat 1 pesanan di `/orders` (0 duplikat).
+   - Data uji `TKTW-20261126-7590B1` telah dibersihkan kembali (`LEFTOVER_TEST: 0`, 15 event & 10 agency utuh).
+
+### C. Ringkasan Dua Angka Terpisah & Verifikasi Akhir (`26 November 2026`)
+- **Cakupan Integrasi API Relevan:** **`41 / 41` (`100%`)** dari total `43` route Flask aktual (`2` route `NOT APPLICABLE`: webhook server-to-server `POST /api/checkout/payment/notification` dan `PUT /api/auth/me` yang sengaja tidak dipakai karena kebijakan profil User read-only di Next.js maupun Mobile; `3` endpoint upload Cloudinary terhubung di klien tetapi berstatus `BLOCKED` oleh `.env` kosong).
+- **Skenario End-to-End (E2E) Lulus (dari `15` skenario inti):**
+  - **Expo Web:** **`13 / 15` PASS** (`1` `BLOCKED` upload Cloudinary, `1` `PARTIAL` kamera fisik headless browser).
+  - **Android Emulator (`Medium_Phone_API_36.0`, sesi 26 Nov):** **`9 / 15` PASS** (`1` `BLOCKED` upload Cloudinary, `5` `NOT TESTED` di Emulator termasuk retest live bridge callback baru).
+  - **Android Fisik:** **`0 / 15` (`NOT TESTED` — tidak ada perangkat terhubung via `adb devices`)**.
+  - **iPhone Fisik:** **`0 / 15` (`NOT TESTED` — host Windows tanpa Xcode/iOS Simulator & tidak ada perangkat terhubung)**.
+- **Quality Checks Terakhir:** `npx tsc --noEmit` (`exit 0`), `npx eslint . --max-warnings=0` (`exit 0`), `npm run test:utils` (**9/9 PASS**), `npx expo export --platform web` (`exit 0`), dan Backend `unittest discover -s tests` (**29/29 OK**).

@@ -6,7 +6,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { AlertCircle, ArrowLeft, Loader2, LogIn, RefreshCw, ShieldAlert } from "lucide-react";
 import api from "@/app/lib/api";
 import { useAuth } from "@/app/context/AuthContext";
-import { saveBookingEntry } from "@/app/lib/bookingStorage";
+import { getGuestTokenForBooking, saveBookingEntry } from "@/app/lib/bookingStorage";
 import {
   isBookingOwnedByUser,
   readPaymentReturnContext,
@@ -44,31 +44,41 @@ function PaymentReturnContent() {
         ? `/user/pesanan/${encodeURIComponent(resolvedBookingCode)}?payment_return=1`
         : "/user/pesanan";
 
-      if (!isAuthenticated || !user) {
-        router.replace(`/login?next=${encodeURIComponent(returnDetailPath)}`);
-        return;
-      }
-
-      if (user.role === "officer") {
+      if (isAuthenticated && user?.role === "officer") {
         setState({
           status: "mismatch",
           bookingCode: resolvedBookingCode,
           message:
-            "Halaman kembali pembayaran hanya diperuntukkan bagi akun pemilik pesanan (User). Sesi aktif Anda saat ini adalah Officer.",
+            "Halaman kembali pembayaran hanya diperuntukkan bagi akun pemilik pesanan (User) atau Guest. Sesi aktif Anda saat ini adalah Officer.",
         });
         return;
       }
 
       if (!resolvedBookingCode) {
-        router.replace(user.role === "admin" ? "/admin" : "/user/pesanan");
+        if (!isAuthenticated || !user) {
+          router.replace("/user/pesanan");
+        } else {
+          router.replace(user.role === "admin" ? "/admin" : "/user/pesanan");
+        }
+        return;
+      }
+
+      // Guest return (belum login): langsung arahkan ke detail pesanan agar guest
+      // bisa lanjut dengan X-Guest-Token tersimpan atau verifikasi buyer_email tanpa dipaksa login.
+      if (!isAuthenticated || !user) {
+        router.replace(returnDetailPath);
         return;
       }
 
       try {
+        const guestToken = getGuestTokenForBooking(resolvedBookingCode);
         const res = await api.get(
           `/checkout/${encodeURIComponent(resolvedBookingCode)}`,
           {},
-          { silent: true }
+          {
+            silent: true,
+            ...(guestToken ? { headers: { "X-Guest-Token": guestToken } } : {}),
+          }
         );
         if (!active) return;
 
@@ -81,7 +91,7 @@ function PaymentReturnContent() {
           return;
         }
 
-        if (!isBookingOwnedByUser(res.data.booking, user)) {
+        if (res.data.booking.user_id != null && !isBookingOwnedByUser(res.data.booking, user)) {
           setState({
             status: "denied",
             bookingCode: resolvedBookingCode,
@@ -91,12 +101,27 @@ function PaymentReturnContent() {
           return;
         }
 
-        saveBookingEntry({ booking_code: res.data.booking.booking_code });
-        router.replace(
-          `/user/pesanan/${encodeURIComponent(res.data.booking.booking_code)}?payment_return=1`
-        );
+        saveBookingEntry({
+          booking_code: res.data.booking.booking_code,
+          guest_token: res.data.guest_access_token || guestToken || null,
+        });
+        router.replace(returnDetailPath);
       } catch (err) {
         if (!active) return;
+        if (err?.status === 401 || err?.status === 403) {
+          if (err?.data?.errors?.requires_verification === "guest_email") {
+            router.replace(returnDetailPath);
+            return;
+          }
+          setState({
+            status: "denied",
+            bookingCode: resolvedBookingCode,
+            message:
+              err?.message ||
+              "Akses ditolak. Pesanan ini terdaftar atas akun pengguna lain atau memerlukan verifikasi.",
+          });
+          return;
+        }
         setState({
           status: "error",
           bookingCode: resolvedBookingCode,

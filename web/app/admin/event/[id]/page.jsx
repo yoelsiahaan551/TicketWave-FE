@@ -20,6 +20,7 @@ import {
   CheckCircle2,
 } from "lucide-react";
 import api from "@/app/lib/api";
+import { ADMIN_MEDIA_ACCEPT, validateAdminMediaFile } from "@/app/lib/adminForms";
 
 const FALLBACK_BANNER =
   "https://images.unsplash.com/photo-1501386761578-eac5c94b800a?q=80&w=1200";
@@ -42,6 +43,7 @@ export default function AdminEventDetailPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [message, setMessage] = useState(null);
+  const [uploadErrors, setUploadErrors] = useState({ poster: null, banner: null });
   const [uploading, setUploading] = useState(false);
 
   const fetchEventDetail = useCallback(async () => {
@@ -66,24 +68,46 @@ export default function AdminEventDetailPage() {
     return () => clearTimeout(t);
   }, [fetchEventDetail]);
 
-  const handleUploadMedia = async (type, file) => {
+  const handleUploadMedia = async (type, eventObj) => {
+    const input = eventObj?.target;
+    const file = input?.files?.[0];
+    if (input) {
+      input.value = "";
+    }
     if (!file || !id) return;
+
+    const validation = validateAdminMediaFile(file);
+    if (!validation.valid) {
+      setUploadErrors((prev) => ({ ...prev, [type]: validation.error }));
+      return;
+    }
+
+    setUploadErrors((prev) => ({ ...prev, [type]: null }));
     setUploading(true);
     setMessage(null);
     try {
       const fd = new FormData();
       fd.append(type, file);
-      await api.upload(`/events/${id}/${type}`, fd);
+      const uploadRes = await api.upload(`/events/${id}/${type}`, fd);
+      setEvent((prev) =>
+        prev
+          ? {
+              ...prev,
+              poster_url: uploadRes?.data?.poster_url ?? prev.poster_url,
+              banner_url: uploadRes?.data?.banner_url ?? prev.banner_url,
+            }
+          : prev
+      );
       setMessage({
         type: "success",
         text: `${type === "poster" ? "Poster" : "Banner"} event berhasil diunggah!`,
       });
       await fetchEventDetail();
     } catch (err) {
-      setMessage({
-        type: "error",
-        text: err.message || `Gagal mengunggah ${type}.`,
-      });
+      setUploadErrors((prev) => ({
+        ...prev,
+        [type]: err.message || `Gagal mengunggah ${type}.`,
+      }));
     } finally {
       setUploading(false);
     }
@@ -186,9 +210,10 @@ export default function AdminEventDetailPage() {
             </span>
             <input
               type="file"
-              accept="image/jpeg,image/png,image/webp"
+              accept={ADMIN_MEDIA_ACCEPT}
+              disabled={uploading}
               className="hidden"
-              onChange={(e) => handleUploadMedia("poster", e.target.files?.[0])}
+              onChange={(e) => handleUploadMedia("poster", e)}
             />
           </label>
 
@@ -199,9 +224,10 @@ export default function AdminEventDetailPage() {
             </span>
             <input
               type="file"
-              accept="image/jpeg,image/png,image/webp"
+              accept={ADMIN_MEDIA_ACCEPT}
+              disabled={uploading}
               className="hidden"
-              onChange={(e) => handleUploadMedia("banner", e.target.files?.[0])}
+              onChange={(e) => handleUploadMedia("banner", e)}
             />
           </label>
 
@@ -215,6 +241,29 @@ export default function AdminEventDetailPage() {
           </button>
         </div>
       </div>
+
+      {(uploadErrors.poster || uploadErrors.banner) && (
+        <div className="space-y-2">
+          {uploadErrors.poster && (
+            <div
+              role="alert"
+              className="flex items-center gap-2 rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-2.5 text-xs font-medium text-rose-700 dark:border-rose-900/60 dark:bg-rose-950/40 dark:text-rose-300"
+            >
+              <AlertCircle size={15} className="shrink-0" />
+              <span>Poster: {uploadErrors.poster}</span>
+            </div>
+          )}
+          {uploadErrors.banner && (
+            <div
+              role="alert"
+              className="flex items-center gap-2 rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-2.5 text-xs font-medium text-rose-700 dark:border-rose-900/60 dark:bg-rose-950/40 dark:text-rose-300"
+            >
+              <AlertCircle size={15} className="shrink-0" />
+              <span>Banner: {uploadErrors.banner}</span>
+            </div>
+          )}
+        </div>
+      )}
 
       {message && (
         <div className="flex items-center gap-2 rounded-xl border border-slate-300 bg-slate-100 p-3.5 text-xs font-medium text-slate-800 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200">
@@ -288,7 +337,9 @@ export default function AdminEventDetailPage() {
             icon: Clock,
             label: "Waktu / Artis",
             value: event.event_time
-              ? `${event.event_time.slice(0, 5)} WIB • ${event.artist_name || ""}`
+              ? `${event.event_time.slice(0, 5)}${
+                  event.event_end_time ? ` – ${event.event_end_time.slice(0, 5)}` : ""
+                } WIB • ${event.artist_name || ""}`
               : event.artist_name || `${lineup.length} Penampil Festival`,
           },
           {
@@ -317,40 +368,72 @@ export default function AdminEventDetailPage() {
         ))}
       </div>
 
-      {/* Description & Festival Lineup */}
-      <div className="grid gap-5 lg:grid-cols-2">
-        <div className="rounded-xl border border-slate-200/80 bg-white p-5 shadow-xs dark:border-slate-800 dark:bg-slate-900">
-          <h2 className="mb-2 text-sm font-semibold text-slate-900 dark:text-white">
-            Deskripsi Event
+      {/* Poster Acara, Description & Festival Lineup */}
+      <div className="grid gap-5 lg:grid-cols-12">
+        <div className="rounded-xl border border-slate-200/80 bg-white p-5 shadow-xs lg:col-span-4 dark:border-slate-800 dark:bg-slate-900">
+          <h2 className="text-sm font-semibold text-slate-900 dark:text-white">
+            Poster Acara
           </h2>
-          <p className="whitespace-pre-line text-xs leading-relaxed text-slate-600 dark:text-slate-300">
-            {event.description || "Belum ada deskripsi."}
+          <p className="mt-0.5 text-[11px] text-slate-500 dark:text-slate-400">
+            Poster tampil utuh tanpa crop, termasuk rasio potret.
           </p>
+          {event.poster_url ? (
+            <div className="mt-3 flex items-center justify-center rounded-xl border border-slate-200/70 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-950/60">
+              <Image
+                src={event.poster_url}
+                alt={`Poster ${event.name}`}
+                width={600}
+                height={800}
+                unoptimized
+                className="h-auto max-h-[420px] w-auto max-w-full rounded-lg object-contain"
+              />
+            </div>
+          ) : (
+            <div className="mt-3 flex min-h-48 flex-col items-center justify-center rounded-xl border border-dashed border-slate-300 bg-slate-50/70 p-4 text-center dark:border-slate-700 dark:bg-slate-800/40">
+              <p className="text-xs font-medium text-slate-500 dark:text-slate-400">
+                Belum ada poster acara.
+              </p>
+              <p className="mt-1 text-[11px] text-slate-400">
+                Gunakan tombol Upload Poster atau Edit Event untuk menambahkan.
+              </p>
+            </div>
+          )}
         </div>
 
-        {lineup.length > 0 && (
+        <div className="space-y-5 lg:col-span-8">
           <div className="rounded-xl border border-slate-200/80 bg-white p-5 shadow-xs dark:border-slate-800 dark:bg-slate-900">
-            <h2 className="mb-2.5 flex items-center gap-2 text-sm font-semibold text-slate-900 dark:text-white">
-              <Music2 size={16} className="text-slate-400" />
-              Lineup Festival ({lineup.length} Artis)
+            <h2 className="mb-2 text-sm font-semibold text-slate-900 dark:text-white">
+              Deskripsi Event
             </h2>
-            <div className="grid gap-2 sm:grid-cols-2">
-              {lineup.map((fa) => (
-                <div
-                  key={fa.id}
-                  className="flex items-center justify-between rounded-lg border border-slate-100 px-3 py-2 text-xs dark:border-slate-800"
-                >
-                  <span className="font-medium text-slate-900 dark:text-white">
-                    {fa.artist_name}
-                  </span>
-                  <span className="rounded-full bg-slate-100 border border-slate-200 px-2 py-0.5 text-[10px] font-medium text-slate-700 dark:bg-slate-800 dark:text-slate-300 dark:border-slate-700">
-                    Hari {fa.day_number}
-                  </span>
-                </div>
-              ))}
-            </div>
+            <p className="whitespace-pre-line text-xs leading-relaxed text-slate-600 dark:text-slate-300">
+              {event.description || "Belum ada deskripsi."}
+            </p>
           </div>
-        )}
+
+          {lineup.length > 0 && (
+            <div className="rounded-xl border border-slate-200/80 bg-white p-5 shadow-xs dark:border-slate-800 dark:bg-slate-900">
+              <h2 className="mb-2.5 flex items-center gap-2 text-sm font-semibold text-slate-900 dark:text-white">
+                <Music2 size={16} className="text-slate-400" />
+                Lineup Festival ({lineup.length} Artis)
+              </h2>
+              <div className="grid gap-2 sm:grid-cols-2">
+                {lineup.map((fa) => (
+                  <div
+                    key={fa.id}
+                    className="flex items-center justify-between rounded-lg border border-slate-100 px-3 py-2 text-xs dark:border-slate-800"
+                  >
+                    <span className="font-medium text-slate-900 dark:text-white">
+                      {fa.artist_name}
+                    </span>
+                    <span className="rounded-full border border-slate-200 bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300">
+                      Hari {fa.day_number}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Ticket Types & Phases */}

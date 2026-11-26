@@ -211,10 +211,22 @@ export function AuthProvider({ children }) {
     }
   };
 
-  const logout = useCallback(() => {
-    api.clearTokens();
-    setUser(null);
-    router.push('/login');
+  const logout = useCallback(async () => {
+    try {
+      if (api.getAccessToken()) {
+        await api.post(
+          '/auth/logout',
+          { refresh_token: api.getRefreshToken() || undefined },
+          { silent: true }
+        );
+      }
+    } catch {
+      // Tetap lanjut bersihkan sesi lokal meskipun revoke token gagal (mis. sudah expired)
+    } finally {
+      api.clearTokens();
+      setUser(null);
+      router.push('/login');
+    }
   }, [router]);
 
   const value = {

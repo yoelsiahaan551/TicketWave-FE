@@ -120,25 +120,79 @@ export function getTodayWibYmd(now: Date = new Date()): string {
   return new Date(wibMs).toISOString().slice(0, 10);
 }
 
-export function isEventPast(
-  event?: { event_date?: string | null; status?: string | null } | null,
-  todayYmd: string = getTodayWibYmd()
+export function isEventOfficiallyEnded(
+  event?: {
+    is_event_ended?: boolean | null;
+    status?: string | null;
+    event_type?: string | null;
+    event_date?: string | null;
+    event_end_time?: string | null;
+  } | null,
+  tickets: { is_event_ended?: boolean | null }[] = [],
+  nowMs: number = Date.now()
 ): boolean {
-  if (!event) return false;
-  if (event.status === 'finished' || event.status === 'archived') {
+  if (event?.is_event_ended === true) return true;
+  if (Array.isArray(tickets) && tickets.some((t) => t?.is_event_ended === true)) {
     return true;
   }
-  if (!event.event_date) return false;
-  const datePart = String(event.event_date).slice(0, 10);
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(datePart)) return false;
-  return datePart < todayYmd;
+  if (event?.status && ['finished', 'archived'].includes(event.status)) {
+    return true;
+  }
+  if (
+    event?.event_type !== 'festival' &&
+    typeof event?.event_date === 'string' &&
+    /^\d{4}-\d{2}-\d{2}/.test(event.event_date.trim())
+  ) {
+    const cleanDate = event.event_date.trim().slice(0, 10);
+    const rawEndTime =
+      typeof event?.event_end_time === 'string' ? event.event_end_time.trim() : '';
+
+    if (/^\d{2}:\d{2}(:\d{2})?$/.test(rawEndTime)) {
+      const hms = rawEndTime.length === 5 ? `${rawEndTime}:00` : rawEndTime;
+      const endMs = Date.parse(`${cleanDate}T${hms}+07:00`);
+      if (Number.isFinite(endMs)) return nowMs > endMs;
+    }
+
+    const endOfDayMs = Date.parse(`${cleanDate}T23:59:59.999+07:00`);
+    if (Number.isFinite(endOfDayMs)) return nowMs > endOfDayMs;
+  }
+  return false;
+}
+
+export function isEventPast(
+  event?: {
+    is_event_ended?: boolean | null;
+    event_type?: string | null;
+    event_date?: string | null;
+    event_end_time?: string | null;
+    status?: string | null;
+  } | null,
+  todayYmdOrNow?: string | number
+): boolean {
+  if (!event) return false;
+  if (typeof todayYmdOrNow === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(todayYmdOrNow)) {
+    if (event.is_event_ended === true) return true;
+    if (event.status === 'finished' || event.status === 'archived') return true;
+    if (!event.event_date) return false;
+    const datePart = String(event.event_date).slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(datePart)) return false;
+    return datePart < todayYmdOrNow;
+  }
+  const nowMs = typeof todayYmdOrNow === 'number' ? todayYmdOrNow : Date.now();
+  return isEventOfficiallyEnded(event, [], nowMs);
 }
 
 export function isEventPurchasable(
-  event?: { status?: string | null; event_date?: string | null } | null,
-  todayYmd: string = getTodayWibYmd()
+  event?: {
+    status?: string | null;
+    is_event_ended?: boolean | null;
+    event_type?: string | null;
+    event_date?: string | null;
+    event_end_time?: string | null;
+  } | null,
+  todayYmdOrNow?: string | number
 ): boolean {
-  return event?.status === 'on_sale' && !isEventPast(event, todayYmd);
+  return event?.status === 'on_sale' && !isEventPast(event, todayYmdOrNow);
 }
 
 export function formatEventSchedule(
@@ -146,6 +200,7 @@ export function formatEventSchedule(
     event_type?: string | null;
     event_date?: string | null;
     event_time?: string | null;
+    event_end_time?: string | null;
     days_count?: number | null;
   } | null,
   options?: { short?: boolean; includeTime?: boolean }
@@ -157,7 +212,14 @@ export function formatEventSchedule(
       ? formatTanggalSingkat(event.event_date)
       : formatTanggal(event.event_date);
     if (includeTime && event.event_time) {
-      return `${dateLabel} • ${formatWaktu(event.event_time)}`;
+      const startTime = formatWaktu(event.event_time);
+      if (event.event_end_time) {
+        const parts = event.event_end_time.split(':');
+        const endShort = parts.length >= 2 ? `${parts[0]}:${parts[1]}` : event.event_end_time;
+        const startShort = event.event_time.slice(0, 5);
+        return `${dateLabel} • ${startShort} – ${endShort} WIB`;
+      }
+      return `${dateLabel} • ${startTime}`;
     }
     return dateLabel;
   }
@@ -174,6 +236,10 @@ export function effectiveTicketPrice(
     active_phase?: { discount_percent?: number | string | null } | null;
   } | null
 ): number {
+  if (tt?.final_price !== null && tt?.final_price !== undefined && tt.final_price !== '') {
+    const fin = Number(tt.final_price);
+    if (Number.isFinite(fin) && fin >= 0) return fin;
+  }
   const base = Number(tt?.base_price ?? 0);
   if (tt?.active_phase && tt.active_phase.discount_percent != null) {
     const discount = Number(tt.active_phase.discount_percent);
@@ -181,20 +247,24 @@ export function effectiveTicketPrice(
       return Math.round(base * (1 - discount / 100));
     }
   }
-  if (tt?.final_price !== null && tt?.final_price !== undefined && tt.final_price !== '') {
-    const fin = Number(tt.final_price);
-    if (Number.isFinite(fin) && fin >= 0) return fin;
-  }
   return Number.isFinite(base) && base >= 0 ? base : 0;
 }
 
 export function isTicketQrEligible(
   bookingStatus?: string | null,
-  ticket?: { status?: string | null; qr_token?: string | null } | null
+  ticket?: { status?: string | null; qr_token?: string | null; is_event_ended?: boolean | null } | null,
+  event?: {
+    is_event_ended?: boolean | null;
+    status?: string | null;
+    event_type?: string | null;
+    event_date?: string | null;
+    event_end_time?: string | null;
+  } | null
 ): boolean {
   if (bookingStatus !== 'paid') return false;
   if (!ticket) return false;
   if (ticket.status !== 'valid') return false;
+  if (ticket.is_event_ended === true || isEventOfficiallyEnded(event, [ticket])) return false;
   return Boolean(typeof ticket.qr_token === 'string' && ticket.qr_token.trim().length > 0);
 }
 
@@ -229,7 +299,7 @@ export function getStatusLabel(status: string): string {
     case 'draft':
       return 'Draft';
     case 'sales_closed':
-      return 'Sales Closed';
+      return 'Penjualan Ditutup';
     case 'ongoing':
       return 'Ongoing';
     case 'finished':
@@ -239,41 +309,47 @@ export function getStatusLabel(status: string): string {
     case 'paid':
       return 'Dibayar';
     case 'pending_payment':
-      return 'Menunggu Bayar';
+      return 'Menunggu Pembayaran';
     case 'cancelled':
-      return 'Dibatalkan';
+      return 'Pesanan Dibatalkan';
     case 'expired':
-      return 'Kadaluarsa';
+      return 'Pembayaran Kedaluwarsa';
+    case 'event_ended':
+      return 'Acara Selesai';
     case 'denied':
-      return 'Ditolak';
+      return 'Pembayaran Ditolak';
     case 'refunded':
-      return 'Dikembalikan';
+      return 'Dana Dikembalikan';
     case 'failed':
       return 'Gagal';
     case 'valid':
       return 'Valid / Aktif';
     case 'used':
-      return 'Sudah Check-In';
+      return 'Sudah Digunakan';
     default:
       return status;
   }
 }
 
 /**
- * Returns the effective display status of a ticket based on its parent booking status.
- * Matches Next.js web behavior:
- * - If booking is 'paid', returns the individual ticket's status ('valid', 'used', etc.)
- * - If booking is 'cancelled', 'expired', 'denied', 'refunded', or 'failed', the ticket status reflects it
- * - If booking is 'pending_payment', returns 'pending_payment'
+ * Returns the effective display status of a ticket based on its parent booking and event status.
+ * Matches Next.js web behavior.
  */
 export function getTicketDisplayStatus(
   bookingStatus?: string | null,
-  ticketStatus?: string | null
+  ticketStatus?: string | null,
+  isEventEnded?: boolean
 ): string {
-  if (bookingStatus === 'paid') return ticketStatus || 'valid';
+  if (bookingStatus === 'cancelled') return 'cancelled';
+  if (bookingStatus === 'paid') {
+    if (ticketStatus === 'used') return 'used';
+    if (isEventEnded) return 'event_ended';
+    return ticketStatus || 'valid';
+  }
+  if (isEventEnded) return 'event_ended';
   if (
     bookingStatus &&
-    ['cancelled', 'expired', 'denied', 'refunded', 'failed'].includes(bookingStatus)
+    ['cancelled', 'expired', 'denied', 'refunded', 'failed', 'sales_closed'].includes(bookingStatus)
   ) {
     return bookingStatus;
   }

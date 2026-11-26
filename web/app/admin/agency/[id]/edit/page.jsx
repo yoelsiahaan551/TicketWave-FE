@@ -6,6 +6,8 @@ import Link from "next/link";
 import Image from "next/image";
 import { ArrowLeft, Building2, Upload, AlertCircle, CheckCircle2 } from "lucide-react";
 import api from "@/app/lib/api";
+import { ADMIN_MEDIA_ACCEPT } from "@/app/lib/adminForms";
+import { useAdminMediaPreview } from "@/app/lib/useAdminMediaPreview";
 
 export default function EditAgencyPage() {
   const params = useParams();
@@ -17,8 +19,14 @@ export default function EditAgencyPage() {
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
   const [address, setAddress] = useState("");
-  const [logoPreview, setLogoPreview] = useState(null);
-  const [logoFile, setLogoFile] = useState(null);
+  const {
+    file: logoFile,
+    previewUrl: logoPreview,
+    error: logoError,
+    setRemotePreview: setLogoRemote,
+    clearPendingFile: clearLogoPending,
+    handleFileChange: handleLogoChange,
+  } = useAdminMediaPreview();
 
   const [loading, setLoading] = useState(true);
   const [loaded, setLoaded] = useState(false);
@@ -42,7 +50,7 @@ export default function EditAgencyPage() {
           setEmail(ag.email || "");
           setPhone(ag.phone || "");
           setAddress(ag.address || "");
-          setLogoPreview(ag.logo_url || null);
+          setLogoRemote(ag.logo_url || null);
         }
         setLoading(false);
       })
@@ -56,7 +64,7 @@ export default function EditAgencyPage() {
     return () => {
       ignore = true;
     };
-  }, [id]);
+  }, [id, setLogoRemote]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -97,8 +105,8 @@ export default function EditAgencyPage() {
         try {
           const formData = new FormData();
           formData.append("logo", logoFile);
-          await api.upload(`/agencies/${id}/logo`, formData);
-          setLogoFile(null);
+          const uploadRes = await api.upload(`/agencies/${id}/logo`, formData);
+          clearLogoPending(uploadRes?.data?.logo_url);
         } catch (uploadErr) {
           setWarning(`Data agency berhasil diperbarui, tetapi logo gagal diunggah: ${uploadErr.message || "Gagal terhubung ke layanan unggahan."} Silakan coba unggah logo kembali.`);
           logoUploadFailed = true;
@@ -297,7 +305,7 @@ export default function EditAgencyPage() {
                 Logo Agency
               </label>
               <div className="flex flex-col items-center justify-center gap-3">
-                <div className="flex h-28 w-28 items-center justify-center overflow-hidden rounded-xl border border-dashed border-slate-300 bg-slate-50 dark:border-slate-700 dark:bg-slate-800">
+                <div className="flex h-28 w-28 items-center justify-center overflow-hidden rounded-xl border border-dashed border-slate-300 bg-slate-50 p-1.5 dark:border-slate-700 dark:bg-slate-800">
                   {logoPreview ? (
                     <Image
                       width={112}
@@ -305,7 +313,7 @@ export default function EditAgencyPage() {
                       unoptimized
                       src={logoPreview}
                       alt="Logo"
-                      className="h-full w-full object-cover"
+                      className="h-full w-full object-contain"
                     />
                   ) : (
                     <Building2 size={32} className="text-slate-300 dark:text-slate-600" />
@@ -318,17 +326,20 @@ export default function EditAgencyPage() {
                   </span>
                   <input
                     type="file"
-                    accept="image/jpeg,image/png,image/webp"
+                    accept={ADMIN_MEDIA_ACCEPT}
                     className="hidden"
-                    onChange={(e) => {
-                      const file = e.target.files?.[0];
-                      if (file) {
-                        setLogoFile(file);
-                        setLogoPreview(URL.createObjectURL(file));
-                      }
-                    }}
+                    onChange={handleLogoChange}
                   />
                 </label>
+                {logoError && (
+                  <p
+                    role="alert"
+                    className="flex w-full items-start gap-1.5 rounded-lg border border-rose-200 bg-rose-50 px-2.5 py-2 text-[11px] font-medium text-rose-700 dark:border-rose-900/60 dark:bg-rose-950/40 dark:text-rose-300"
+                  >
+                    <AlertCircle size={13} className="mt-0.5 shrink-0" />
+                    <span>{logoError}</span>
+                  </p>
+                )}
                 <p className="text-center text-[11px] text-slate-400">
                   JPG, PNG, atau WEBP maks. 5MB
                 </p>

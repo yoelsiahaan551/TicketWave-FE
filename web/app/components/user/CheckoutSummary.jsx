@@ -13,10 +13,16 @@ export default function CheckoutSummary({
       minimumFractionDigits: 0,
     }).format(n || 0);
 
-  const subtotal = items.reduce(
-    (acc, item) => acc + item.harga * item.jumlah,
+  const normalSubtotal = items.reduce(
+    (acc, item) => acc + (item.base_price ?? item.harga) * item.jumlah,
     0
   );
+  const derivedDiskon = items.reduce((acc, item) => {
+    const base = item.base_price ?? item.harga;
+    return acc + Math.max(0, base - item.harga) * item.jumlah;
+  }, 0);
+  const effectiveDiskon = diskon > 0 ? diskon : derivedDiskon;
+  const activePhaseInfo = items.find((item) => item.active_phase)?.active_phase || null;
 
   return (
     <div className="rounded-xl border border-slate-200/80 bg-white p-5 shadow-xs transition-colors dark:border-slate-800 dark:bg-slate-900">
@@ -25,31 +31,45 @@ export default function CheckoutSummary({
       </h3>
 
       <div className="mt-4 space-y-3">
-        {items.map((item, i) => (
-          <div
-            key={item.ticket_type_id || item.id || i}
-            className="flex items-center justify-between text-xs"
-          >
-            <div>
-              <p className="font-medium text-slate-800 dark:text-slate-200">
-                {item.nama} × {item.jumlah}
-              </p>
-              <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                {formatRupiah(item.harga)} / tiket
-              </p>
+        {items.map((item, i) => {
+          const unitNormal = item.base_price ?? item.harga;
+          const hasPhaseDiscount = unitNormal > item.harga;
+          return (
+            <div
+              key={item.ticket_type_id || item.id || i}
+              className="flex items-center justify-between text-xs"
+            >
+              <div>
+                <p className="font-medium text-slate-800 dark:text-slate-200">
+                  {item.nama} × {item.jumlah}
+                </p>
+                <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                  {hasPhaseDiscount ? (
+                    <>
+                      <span className="line-through opacity-75">{formatRupiah(unitNormal)}</span>{" "}
+                      <span className="font-medium text-emerald-700 dark:text-emerald-400">
+                        {formatRupiah(item.harga)}
+                      </span>{" "}
+                      / tiket
+                    </>
+                  ) : (
+                    <>{formatRupiah(item.harga)} / tiket</>
+                  )}
+                </p>
+              </div>
+              <span className="font-semibold text-slate-900 dark:text-white">
+                {formatRupiah(unitNormal * item.jumlah)}
+              </span>
             </div>
-            <span className="font-semibold text-slate-900 dark:text-white">
-              {formatRupiah(item.harga * item.jumlah)}
-            </span>
-          </div>
-        ))}
+          );
+        })}
       </div>
 
       <div className="mt-4 space-y-2 border-t border-slate-100 pt-4 text-xs dark:border-slate-800">
         <div className="flex justify-between text-slate-500 dark:text-slate-400">
-          <span>Subtotal</span>
+          <span>Harga Normal</span>
           <span className="font-medium text-slate-900 dark:text-white">
-            {formatRupiah(subtotal)}
+            {formatRupiah(normalSubtotal)}
           </span>
         </div>
 
@@ -62,10 +82,15 @@ export default function CheckoutSummary({
           </div>
         )}
 
-        {diskon > 0 && (
-          <div className="flex justify-between text-slate-700 dark:text-slate-300">
-            <span>Diskon Fase</span>
-            <span className="font-medium">-{formatRupiah(diskon)}</span>
+        {effectiveDiskon > 0 && (
+          <div className="flex justify-between text-emerald-700 dark:text-emerald-400">
+            <span>
+              Diskon Fase
+              {activePhaseInfo?.discount_percent != null
+                ? ` (${activePhaseInfo.discount_percent}%)`
+                : ""}
+            </span>
+            <span className="font-medium">-{formatRupiah(effectiveDiskon)}</span>
           </div>
         )}
       </div>

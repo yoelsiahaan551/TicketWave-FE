@@ -25,6 +25,7 @@ import {
   Flame,
   Headphones,
   HelpCircle,
+  Mail,
   MapPin,
   Music2,
   QrCode,
@@ -41,7 +42,7 @@ import {
 import { BrandColors, PublicThemePalette } from '../src/constants/Colors';
 import { useAuth } from '../src/context/AuthContext';
 import { fetchBookingDetail, fetchPublicCities, fetchPublicEvents } from '../src/api/endpoints';
-import { saveBookingEntry } from '../src/utils/storage';
+import { getGuestTokenForBooking, saveBookingEntry } from '../src/utils/storage';
 import { EventItem } from '../src/types';
 import { EventCard } from '../src/components/event/EventCard';
 import { EventCardSkeleton } from '../src/components/common/Skeleton';
@@ -115,6 +116,7 @@ export default function LandingScreen() {
 
   // Guest booking lookup state (modal/bottom sheet only)
   const [bookingCode, setBookingCode] = useState('');
+  const [lookupBuyerEmail, setLookupBuyerEmail] = useState('');
   const [lookupLoading, setLookupLoading] = useState(false);
   const [lookupError, setLookupError] = useState<string | null>(null);
   const [lookupModalOpen, setLookupModalOpen] = useState(false);
@@ -180,6 +182,7 @@ export default function LandingScreen() {
 
   const handleLookupBooking = async (overrideCode?: string) => {
     const rawCode = (overrideCode !== undefined ? overrideCode : bookingCode).trim().toUpperCase();
+    const rawEmail = lookupBuyerEmail.trim();
     if (!rawCode) {
       setLookupError('Masukkan kode booking pesanan Anda terlebih dahulu.');
       return;
@@ -189,11 +192,16 @@ export default function LandingScreen() {
     setLookupError(null);
 
     try {
-      const res = await fetchBookingDetail(rawCode);
+      const savedGuestToken = await getGuestTokenForBooking(rawCode);
+      const res = await fetchBookingDetail(rawCode, {
+        guestToken: savedGuestToken,
+        buyerEmail: rawEmail || null,
+        silent: true,
+      });
       if (res.success && res.data?.booking) {
         await saveBookingEntry({
           booking_code: res.data.booking.booking_code,
-          payment_url: res.data.booking.payment_url || null,
+          guest_token: res.data.guest_access_token || savedGuestToken || null,
           recipient_email:
             res.data.booking.recipient_email || res.data.booking.buyer_email,
           event_name: res.data.event?.name,
@@ -201,6 +209,7 @@ export default function LandingScreen() {
 
         setLookupModalOpen(false);
         setBookingCode('');
+        setLookupBuyerEmail('');
         router.push({
           pathname: '/order/[id]',
           params: { id: res.data.booking.booking_code },
@@ -209,8 +218,17 @@ export default function LandingScreen() {
         setLookupError(res.message || `Kode booking "${rawCode}" tidak ditemukan.`);
       }
     } catch (err: any) {
+      const reqMode = err?.data?.errors?.requires_verification;
       if (err?.status === 404) {
         setLookupError(`Kode booking "${rawCode}" tidak ditemukan. Periksa kembali kode Anda.`);
+      } else if (reqMode === 'guest_email') {
+        setLookupError(
+          'Pesanan guest ditemukan. Masukkan email pembeli yang digunakan saat checkout pada kolom Email Pembeli di bawah.'
+        );
+      } else if (reqMode === 'login') {
+        setLookupError(
+          'Pesanan ini terdaftar atas akun pengguna. Silakan login dengan akun pemilik pesanan terlebih dahulu.'
+        );
       } else if (err?.status === 0 || !err?.status) {
         setLookupError(
           'Tidak dapat terhubung ke layanan TicketWave. Periksa koneksi Anda dan coba lagi.'
@@ -218,7 +236,7 @@ export default function LandingScreen() {
       } else {
         setLookupError(
           err?.message ||
-            'Tidak dapat terhubung ke layanan TicketWave. Periksa koneksi Anda dan coba lagi.'
+            'Kode booking tidak ditemukan atau verifikasi email belum cocok.'
         );
       }
     } finally {
@@ -852,6 +870,46 @@ export default function LandingScreen() {
                 <TouchableOpacity
                   onPress={() => {
                     setBookingCode('');
+                    if (lookupError) setLookupError(null);
+                  }}
+                  style={styles.clearBtn}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                >
+                  <X size={15} color={colors.textMuted} />
+                </TouchableOpacity>
+              )}
+            </View>
+
+            <View
+              style={[
+                styles.lookupInputContainer,
+                {
+                  backgroundColor: colors.surfaceElevated,
+                  borderColor: colors.border,
+                  marginBottom: 12,
+                },
+              ]}
+            >
+              <Mail size={16} color={colors.textMuted} />
+              <TextInput
+                style={[styles.lookupInput, { color: colors.text }]}
+                placeholder="Email pembeli (untuk verifikasi pesanan guest)"
+                placeholderTextColor={colors.textMuted}
+                value={lookupBuyerEmail}
+                onChangeText={(t) => {
+                  setLookupBuyerEmail(t);
+                  if (lookupError) setLookupError(null);
+                }}
+                keyboardType="email-address"
+                autoCapitalize="none"
+                autoCorrect={false}
+                returnKeyType="done"
+                onSubmitEditing={() => handleLookupBooking()}
+              />
+              {lookupBuyerEmail.length > 0 && (
+                <TouchableOpacity
+                  onPress={() => {
+                    setLookupBuyerEmail('');
                     if (lookupError) setLookupError(null);
                   }}
                   style={styles.clearBtn}

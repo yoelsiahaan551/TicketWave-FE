@@ -48,6 +48,7 @@ export interface TicketType {
     end_date?: string | null;
   } | null;
   final_price?: number;
+  discount_amount?: number;
   stock_available?: number;
   phases?: TicketPhase[];
   created_at?: string;
@@ -86,6 +87,9 @@ export interface EventItem {
   artist_name?: string | null;
   event_date?: string | null;
   event_time?: string | null;
+  event_end_time?: string | null;
+  is_event_ended?: boolean;
+  is_event_bookable?: boolean;
   days_count?: number | null;
   price_from?: number | null;
   total_quota?: number;
@@ -137,6 +141,8 @@ export interface TicketItem {
   venue?: string;
   event_date?: string | null;
   event_time?: string | null;
+  event_end_time?: string | null;
+  is_event_ended?: boolean;
   ticket_type_name?: string;
 }
 
@@ -164,12 +170,19 @@ export interface Booking {
   quantity: number;
   unit_price: number;
   discount_percent: number;
+  discount_amount?: number;
   total_price: number;
   buyer_name: string;
   buyer_email: string;
   buyer_phone: string;
   recipient_email?: string | null;
   status: BookingStatus;
+  effective_payment_status?: string;
+  is_payment_expired?: boolean;
+  is_event_ended?: boolean;
+  is_event_bookable?: boolean;
+  can_pay?: boolean;
+  can_cancel?: boolean;
   payment_method?: string | null;
   payment_url?: string | null;
   expired_at: string;
@@ -181,6 +194,7 @@ export interface BookingDetailResponse {
   event: EventItem;
   ticket_type: TicketType;
   tickets: TicketItem[];
+  guest_access_token?: string;
 }
 
 export interface CheckoutPayload {
@@ -192,6 +206,7 @@ export interface CheckoutPayload {
   buyer_phone: string;
   recipient_email?: string;
   payment_method: PaymentMethodId;
+  return_url?: string;
 }
 
 export interface SyncPaymentStatusResponse {
@@ -210,6 +225,7 @@ export interface SyncPaymentStatusResponse {
 
 export interface SavedBookingEntry {
   booking_code: string;
+  guest_token?: string | null;
   payment_url?: string | null;
   recipient_email?: string | null;
   event_name?: string;

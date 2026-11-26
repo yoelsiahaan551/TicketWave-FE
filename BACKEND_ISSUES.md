@@ -2,38 +2,60 @@
 **File Path:** `C:\Users\LOQ\Documents\TicketWave\TicketWave-FE\BACKEND_ISSUES.md`  
 **Target Komponen:** Backend Flask (`TicketWave-BE`)  
 **Referensi Terkait:** Frontend Next.js (`TicketWave-FE/web`), Mobile Expo (`TicketWave-FE/mobile`), Laporan Audit Integrasi (`MD.BE.md`), Audit Frontend (`BE.md`)  
-**Tanggal Diperbarui:** 20 November 2026  
-**Status Audit:** READ-ONLY Static & Dynamic Source Code Analysis (Diperbarui dengan Verifikasi Perbaikan Runtime)  
+**Tanggal Diperbarui:** 21 November 2026  
+**Status Audit:** Verifikasi Kode Aktual + Alembic Migration (`8b4e2f1a9c01`) + Unit Test (`26/26 PASS`) + Live End-to-End Browser & Midtrans Sandbox (`PASS` untuk fitur aktif, disertai daftar item `BLOCKED`/`NOT TESTED`)  
 
-Dokumen ini adalah **sumber tunggal kebenaran (single source of truth)** untuk seluruh temuan teknis, bug kode, celah keamanan, dan keterbatasan desain API pada Backend Flask TicketWave. Dokumen ini membedakan secara tegas antara **Bug Internal Backend** (kesalahan sintaksis, nama kolom database, signature fungsi, exception handler) dengan **Keterbatasan Desain API** (ketiadaan endpoint spesifik, ketiadaan model relasi, dan integrasi pihak ketiga yang belum lengkap).
+Dokumen ini adalah **sumber tunggal kebenaran (single source of truth)** untuk seluruh temuan teknis, bug kode, celah keamanan, dan keterbatasan desain API pada Backend Flask TicketWave. Dokumen ini membedakan secara tegas antara **Bug Internal Backend** (kesalahan sintaksis, nama kolom database, signature fungsi, exception handler) dengan **Keterbatasan Desain / Fitur Rencana** (ketiadaan endpoint spesifik, integrasi eksternal tanpa kredensial, atau fitur baru yang menunggu keputusan produk).
 
 ---
 
-## Ringkasan Masalah Backend
+## Ringkasan Masalah Backend & Pembaruan Final (21 November 2026)
 
 - **Total Issue Tercatat:** `15`
-- **Status `OPEN`:** `11` (`ISSUE-03`–`ISSUE-08`, `ISSUE-11`–`ISSUE-15`)
-- **Status `PARTIALLY RESOLVED — SANDBOX VERIFIED`:** `1` (`ISSUE-09`)
-- **Status `IMPLEMENTED — LIVE WEBHOOK VERIFICATION BLOCKED`:** `1` (`ISSUE-10`)
-- **Status `RESOLVED`:** `2` (`ISSUE-01`, `ISSUE-02`)
+- **Status `RESOLVED — PASS`:** `9` (`ISSUE-01`, `ISSUE-02`, `ISSUE-03`, `ISSUE-04`, `ISSUE-08`, `ISSUE-09` [Sandbox PASS], `ISSUE-13`, `ISSUE-14`, `ISSUE-15`)
+- **Status `BLOCKED` (Kredensial/Infrastruktur Eksternal):** `2` (`ISSUE-10` [Live Webhook tanpa HTTPS publik], `ISSUE-12` [Live SMTP tanpa kredensial di `.env` — kode SMTP & fallback log `PASS`])
+- **Status `BLOCKED` (Fitur Rencana / Belum Diimplementasikan di Backend):** `4` (`ISSUE-05`, `ISSUE-06`, `ISSUE-07`, `ISSUE-11`) — ditambah **Fitur Baru `BLOCKED`**: *Diskon Khusus Akun Login* (ditahan menunggu keputusan nominal/persentase dan aturan penggabungan dengan Early Bird)
+- **Status `NOT TESTED`:** Kamera fisik Officer (`html5-qrcode` webcam live stream tidak dijalankan di browser headless; jalur upload gambar QR PNG `jsQR`/`scanFile` + input manual lulus live `PASS`)
 
-| ID | Masalah | Prioritas | Status | Dampak Next.js | Dampak Mobile |
+### Rekonsiliasi Cakupan Endpoint Backend (42 Route Flask Terdaftar vs Laporan 38/38 & 34/42)
+
+Dari pemeriksaan langsung `app.url_map` setelah finalisasi (`21 November 2026`), Backend Flask mendaftarkan tepat **42 route**:
+1. **Endpoint Operasional / Webhook / Internal (`3` route):**
+   - `GET /health` (dipakai `/admin/settings` untuk monitoring opsional, tidak butuh menu user umum)
+   - `POST /api/checkout/payment/notification` (server-to-server Midtrans webhook, tidak punya tombol UI)
+   - `POST /api/auth/refresh` (refresh interceptor otomatis di `api.js`, tanpa tombol UI manual)
+2. **Endpoint Fitur Web Aktif (`39` route `UI-facing`, seluruhnya terintegrasi dan dipakai di Next.js — `39/39` atau `41/42` termasuk `/health` & `/auth/refresh`; webhook server-only `1/42`):**
+   - **Auth (`8` UI + `1` refresh = `9`):** `/api/auth/register`, `/api/auth/login`, `/api/auth/logout` *(baru)*, `/api/auth/me` `GET` & `PUT` *(baru)*, `/api/auth/verify-email/<token>`, `/api/auth/request-password-reset`, `/api/auth/reset-password`, `/api/auth/refresh`.
+   - **Public Catalog (`3`):** `/api/public/events`, `/api/public/events/<int:event_id>`, `/api/public/events/cities`.
+   - **Checkout & Orders (`5` UI + `1` webhook = `6`):** `POST /api/checkout`, `GET /api/checkout/my-bookings` *(baru)*, `GET /api/checkout/<booking_code>`, `POST /api/checkout/<booking_code>/cancel`, `POST /api/checkout/<booking_code>/sync-payment-status`, `POST /api/checkout/payment/notification`.
+   - **Admin Agencies (`6`):** `GET/POST /api/agencies`, `GET/PUT/DELETE /api/agencies/<id>`, `POST /api/agencies/<id>/logo`.
+   - **Admin Events (`8`):** `GET/POST /api/events`, `GET/PUT/DELETE /api/events/<id>`, `POST /api/events/<id>/poster`, `POST /api/events/<id>/banner`, `PATCH /api/events/<id>/status`.
+   - **Admin Ticket Phases (`5`):** `GET/POST /api/ticket-types/<id>/phases`, `GET/PUT/DELETE /api/phases/<id>`.
+   - **Officer Scan (`4`):** `GET /api/scan/stats`, `GET /api/scan/history`, `POST /api/scan/validate`, `POST /api/scan/check-in`.
+3. **Alasan Perbedaan Laporan `38/38` vs `34/42`:**
+   - Sebelum finalisasi terdapat `39` route terdaftar (bukan `42`): laporan `38/38` menghitung route terintegrasi non-internal pada kondisi sebelum 3 endpoint baru ditambahkan (`logout`, `PUT /me`, `my-bookings`) dan tanpa menghitung rute yang memang belum ada; sedangkan angka `34/42` memasukkan fitur yang belum tersedia di Backend (manajemen user admin, laporan/analitik omzet, penugasan officer/kasir, dll.) atau mengabaikan perbedaan endpoint operasional/internal.
+
+### Fitur & Gap Tambahan yang Diselesaikan / Dicatat (21 November 2026)
+- **Akses Pesanan (Booking Ownership & Guest Verification — `PASS`):** `GET /api/checkout/<code>`, `POST .../cancel`, dan `POST .../sync-payment-status` kini memeriksa kepemilikan JWT `user_id` (`401`/`403` tanpa kebocoran PII/tiket) serta mendukung akses Guest yang aman via `X-Guest-Token` HMAC-SHA256 dan verifikasi `X-Buyer-Email` (`guest_email`).
+- **Masa Berlaku Tiket & Pelestarian Riwayat (`PASS`, dengan Gap Festival):** Tiket baru dibuat dengan `status="pending"` dan `qr_token: null` hingga status booking `paid`; validasi dan check-in menolak tiket belum lunas (`400`) serta acara `finished`, `archived`, atau event `single` yang melewati `event_end_time` resmi / `event_date` (`400`) tanpa mengubah DB maupun statistik scan, sambil melestarikan riwayat pesanan/pembayaran/tiket User. **Gap tercatat:** event bertipe `festival` saat ini belum memiliki field jadwal tanggal/jam selesai per hari atau tanggal akhir global, sehingga penutupan otomatis berbasis waktu untuk festival ditandai sebagai gap dan mengandalkan transisi status Admin `finished` / `archived`.
+
+| ID | Masalah | Prioritas | Status Terakhir | Dampak Next.js & Hasil Verifikasi | Dampak Mobile |
 |---|---|:---:|:---:|---|---|
-| **ISSUE-01** | Detail festival multi-day menghasilkan HTTP 500 (`FestivalArtist.day` vs `day_number`) | **P1** | **RESOLVED** | Halaman `/user/event/[id]` (`event_id=12`) kini berhasil memuat detail & lineup festival (`HTTP 200 OK`) | Layar `event/[id].tsx` kini dapat memuat detail & lineup festival (`HTTP 200 OK`) |
-| **ISSUE-02** | Seluruh endpoint officer menghasilkan HTTP 404 (`scan_bp` & `kasir_bp` belum terdaftar, file rute belum ada) | **P1** | **RESOLVED — LIVE QR VALIDATION AND CHECK-IN VERIFIED** | Seluruh modul `/officer/*` kini berfungsi penuh (`GET /api/scan/stats`, `GET /api/scan/history`, `POST /api/scan/validate`, `POST /api/scan/check-in` mengembalikan HTTP 200/409/400/404 sesuai kontrak; modul `/api/kasir/*` tetap ditunda di luar ruang lingkup) | Seluruh modul `officer/*` pada Mobile kompatibel dengan kontrak respons `/api/scan/*` yang sama |
-| **ISSUE-03** | Upload media logo, poster, dan banner menghasilkan HTTP 500 (Dua penyebab: kredensial invalid & exception SDK Cloudinary unhandled, plus `delete_image` URL bug) | **P2** | **OPEN** | Gagal unggah logo agensi, poster, dan banner event pada dashboard admin | Gagal unggah file media pada form edit agensi dan event (HTTP 500) |
-| **ISSUE-04** | Ketiadaan endpoint daftar pesanan pengguna (`GET /api/checkout/my-bookings`) | **P2** | **OPEN** | Frontend terpaksa mengandalkan `localStorage` per peramban; data hilang jika cache dibersihkan | Aplikasi terpaksa mengandalkan `AsyncStorage` lokal; pesanan tidak sinkron antar perangkat |
-| **ISSUE-05** | Ketiadaan endpoint daftar manajemen users admin (`GET /api/users`) | **P3** | **OPEN** | Navigasi admin user hanya stub/template tanpa integrasi data pengguna | Layar `admin/users.tsx` hanya menampilkan fallback dari `/api/auth/me` dan `/api/agencies` |
-| **ISSUE-06** | Ketiadaan endpoint agregasi omzet dan analitik penjualan global | **P3** | **OPEN** | Dashboard admin menghitung estimasi matematis di klien yang rentan selisih | Dashboard admin menampilkan label `—` tanpa data finansial riil |
-| **ISSUE-07** | Ketiadaan model dan endpoint penugasan officer ke event/gate | **P3** | **OPEN** | Daftar event petugas menampilkan seluruh event publik tanpa konteks penugasan | Layar `officer/events.tsx` hanya menampilkan list publik dengan catatan disclaimer |
-| **ISSUE-08** | Bug kalkulasi fase harga tiket diskon pada checkout & katalog (`calculate_final_price`) | **P1** | **OPEN** | Transaksi checkout tiket berfase diskon gagal fatal dengan HTTP 500 (*TypeError*) | Checkout tiket fase Early Bird/Presale gagal dengan HTTP 500 (*TypeError*) |
-| **ISSUE-09** | Simulasi dummy URL pembayaran Midtrans Snap tanpa integrasi riil API (`POST /api/checkout`) | **P2** | **PARTIALLY RESOLVED — SANDBOX VERIFIED** | Checkout Next.js mengirim `payment_method`, menerima `redirect_url` Snap Sandbox asli, `GET /api/checkout/<code>` murni read-only, & tombol manual memanggil `POST .../sync-payment-status`; Production masih terpisah | Mobile tidak diubah pada tugas ini; endpoint Backend kini menerbitkan `redirect_url` Snap Sandbox nyata |
-| **ISSUE-10** | Kelemahan keamanan webhook Midtrans (tanpa SHA-512, status kartu kredit `capture` terabaikan, & tiket tidak di-cancel) | **P2** | **IMPLEMENTED — LIVE WEBHOOK VERIFICATION BLOCKED** | Verifikasi SHA-512, `compare_digest`, `gross_amount`, `capture`/`settlement`/`refund`, idempotensi, & pembatalan tiket lulus 13 unit test; live webhook ke localhost terblokir tanpa HTTPS publik (fallback `POST` terproteksi tersedia hanya untuk Sandbox/dev) | Konsisten dengan perilaku Backend; tiket diinvalidasi menjadi `cancelled` saat order dibatalkan/kedaluwarsa/refund |
-| **ISSUE-11** | Ketiadaan atribut kategori / genre pada model Event dan endpoint katalog publik | **P4** | **OPEN** | Filter kategori musik/seni pada katalog dieksplorasi diabaikan oleh backend | Filter chip kategori pada tab `(tabs)/events.tsx` tidak memfilter genre event di backend |
-| **ISSUE-12** | Layanan email verifikasi & reset password hanya log konsol terminal (SMTP belum terkonfigurasi) | **P3** | **OPEN** | Pengguna tidak menerima email aktivasi atau tautan reset password di kotak masuk | Pengguna mobile mengandalkan copy token manual dari log server / fallback dev |
-| **ISSUE-13** | Status code mismatch pada handler `error_response` (argumen status code masuk ke parameter `errors`) | **P3** | **OPEN** | Akses forbidden atau resource not found diterima sebagai HTTP 400 bukannya 403/404 | Interceptor dan penanganan error klien membaca status HTTP 400 untuk semua jenis error |
-| **ISSUE-14** | Ketiadaan endpoint pembaruan profil pengguna (`PUT /api/auth/me`) | **P3** | **OPEN** | Pengguna tidak dapat memperbarui nama profil atau nomor telepon di halaman profil | Form edit profil di aplikasi mobile tidak memiliki endpoint untuk persistensi data |
-| **ISSUE-15** | Ketiadaan mekanisme revokasi sesi server-side & endpoint logout (`POST /api/auth/logout`) | **P3** | **OPEN** | Token JWT tetap aktif sampai masa kedaluwarsa alami meskipun pengguna sudah logout | Pembersihan sesi hanya terjadi di sisi klien tanpa token blocklist di server |
+| **ISSUE-01** | Detail festival multi-day menghasilkan HTTP 500 (`FestivalArtist.day` vs `day_number`) | **P1** | **RESOLVED — PASS** | `/user/event/[id]` memuat detail & lineup festival (`HTTP 200 OK`) | Layar `event/[id].tsx` dapat memuat detail festival |
+| **ISSUE-02** | Seluruh endpoint officer menghasilkan HTTP 404 (`scan_bp` & `kasir_bp` belum terdaftar) | **P1** | **RESOLVED — PASS** *(Kamera fisik: `NOT TESTED`)* | Seluruh `/officer/*` berfungsi penuh; live browser memverifikasi upload QR PNG `Pindai Gambar QR`, input manual, unpaid `400`, duplikat `409`, acara `finished` `400`, dan isolasi role (`PASS`); `/api/kasir/*` tetap `NOT APPLICABLE` | Kompatibel dengan `/api/scan/*` |
+| **ISSUE-03** | Upload media logo, poster, dan banner gagal (`500` unhandled SDK, URL `delete_image` bug, whitespace/`.env` `@`) | **P2** | **RESOLVED — PASS** | Konfigurasi Cloudinary `.env` dibersihkan, `UploadGatewayError` -> HTTP `503` terpasang, `extract_cloudinary_public_id` & `delete_image` diperbaiki, **teruji live browser upload logo agensi & poster event berhasil (`200 OK` -> URL CDN `res.cloudinary.com`)** + unit test `422`/`503`/`destroy` mock lulus | Endpoint media konsisten |
+| **ISSUE-04** | Ketiadaan endpoint daftar pesanan pengguna (`GET /api/checkout/my-bookings`) | **P2** | **RESOLVED — PASS** | `GET /api/checkout/my-bookings` diimplementasikan; `/user/pesanan` dan `/user/ticket` disinkronkan lintas perangkat via akun + `guest_access_token` HMAC & verifikasi email untuk Guest; teruji live lintas origin `127.0.0.1:3000` | Mobile dapat bermigrasi ke `GET /api/checkout/my-bookings` |
+| **ISSUE-05** | Ketiadaan endpoint daftar manajemen users admin (`GET /api/users`) | **P3** | **BLOCKED** *(Planned / Belum Diimplementasikan)* | Tidak menjadi bagian modul web yang tersedia; dicatat terpisah pada roadmap Admin | Belum tersedia |
+| **ISSUE-06** | Ketiadaan endpoint agregasi omzet dan analitik penjualan global | **P3** | **BLOCKED** *(Planned / Belum Diimplementasikan)* | Dashboard Admin menggunakan data event & agency tanpa mengklaim laporan omzet global Backend | Belum tersedia |
+| **ISSUE-07** | Ketiadaan model dan endpoint penugasan officer ke event/gate | **P3** | **BLOCKED** *(Planned / Membutuhkan Desain Produk/Skema)* | Officer tetap menggunakan halaman tugas tanpa skema penugasan per-event/gate | Belum tersedia |
+| **ISSUE-08** | Bug kalkulasi fase harga tiket & SQLite `Decimal` (`bookings.discount_percent`, `calculate_final_price`) | **P1** | **RESOLVED — PASS** | `Booking.discount_percent` dimigrasi ke `Numeric(5,2)`, `calculate_final_price` & `event_routes.py` diperbaiki dengan `Decimal` `ROUND_HALF_UP`; teruji live diskon pecahan `12.5%` konsisten identik (`Rp 160.000` -> `Rp 140.000`, qty 2 `Rp 280.000`) dari katalog -> detail -> checkout -> booking -> Midtrans Snap | Konsisten untuk klien Mobile |
+| **ISSUE-09** | Simulasi dummy URL Midtrans Snap & return sesi/pembayaran (`POST /api/checkout`) | **P2** | **RESOLVED — PASS (SANDBOX)** | Snap Sandbox nyata + Permata VA Simulator terbayar (`Rp 280.000`), guest return `/payment/finish` tidak dipaksa `/login`, exit tanpa bayar (`/payment/unfinish`) kembali ke booking sama & `Lanjutkan Pembayaran` memakai ulang `payment_url` tanpa duplikasi; **Production remains separate** | Terbatas pada konfigurasi Sandbox |
+| **ISSUE-10** | Kelemahan keamanan webhook Midtrans (`SHA-512`, `capture`, cancel/expire tiket) | **P2** | **IMPLEMENTED — LIVE WEBHOOK BLOCKED** | Kode SHA-512, `compare_digest`, `capture`/`settlement`/`refund`, idempotensi & transisi `pending` -> `valid` lulus unit test; uji terima webhook HTTP publik ke localhost terblokir tanpa URL HTTPS publik (`BLOCKED`), dimitigasi dengan `POST .../sync-payment-status` di Sandbox | Konsisten |
+| **ISSUE-11** | Ketiadaan atribut kategori/genre pada model Event | **P4** | **BLOCKED** *(Planned Schema Extension)* | Katalog Next.js memfilter tipe/kota/tanggal/teks sesuai API | Belum tersedia |
+| **ISSUE-12** | Layanan email verifikasi & reset password hanya output print log | **P3** | **CODE IMPLEMENTED — LIVE SMTP BLOCKED** | Helper `app/utils/email_service.py` (SMTP TLS stdlib + fallback `log_only` aman tanpa token leak) diimplementasikan & lulus unit test; pengiriman inbox nyata tetap `BLOCKED` karena `.env` belum mengisi kredensial `SMTP_HOST`/`SMTP_EMAIL`/`SMTP_PASSWORD` | Menunggu konfigurasi `.env` SMTP |
+| **ISSUE-13** | Status code mismatch pada `error_response` (`403`/`404`/`409` jadi `400`) | **P3** | **RESOLVED — PASS** | Seluruh `error_response(..., status_code=...)` pada `decorators.py`, `event_routes.py`, `auth/routes.py`, `checkout_routes.py` diperbaiki dan teruji mengembalikan HTTP `401`/`403`/`404`/`409` sebenarnya | Klien menerima kode HTTP akurat |
+| **ISSUE-14** | Ketiadaan endpoint pembaruan profil pengguna (`PUT /api/auth/me`) | **P3** | **RESOLVED — PASS** | `PUT /api/auth/me` + halaman `/user/profile` interaktif diimplementasikan dan teruji live browser (`E2E User1 Updated` & nomor telepon tersimpan setelah reload) + unit test konflik `409` | Tersedia untuk Mobile |
+| **ISSUE-15** | Ketiadaan mekanisme revokasi sesi & endpoint logout (`POST /api/auth/logout`) | **P3** | **RESOLVED — PASS** | Tabel `revoked_tokens`, blocklist loader JWT, `POST /api/auth/logout`, dan integrasi `AuthContext.jsx` diimplementasikan; unit test memverifikasi access+refresh token ditolak `401`, dan live logout browser mencatat `revoked_tokens=14` di SQLite | Tersedia untuk Mobile |
 
 ---
 
@@ -169,110 +191,38 @@ Dokumen ini adalah **sumber tunggal kebenaran (single source of truth)** untuk s
 
 ## ISSUE-03 — Upload Media Logo, Poster, dan Banner Menghasilkan HTTP 500
 
-- **Status:** `OPEN`
+- **Status:** `RESOLVED — PASS` *(Diperbaiki & Teruji Live Upload Cloudinary 21 November 2026)*
 - **Prioritas:** `P2` (Medium-High)
-- **Komponen:** Upload Service (`app/utils/upload_service.py`) & Media Routes
+- **Komponen:** Upload Service (`app/utils/upload_service.py`), Config (`app/config/config.py`, `app/config/cloudinary_config.py`) & Media Routes
 - **Endpoint:**
   - `POST /api/agencies/<int:agency_id>/logo`
   - `POST /api/events/<int:event_id>/poster`
   - `POST /api/events/<int:event_id>/banner`
-- **File terkait:**
-  - `app/utils/upload_service.py` (Baris 38-61)
-  - `app/config/cloudinary_config.py` (Baris 9-15)
-  - `app/modules/admin/agency_routes.py` (Baris 119-138)
-  - `app/modules/admin/event_routes.py` (Baris 228-285)
-- **Gejala:**
-  Form pengunggahan gambar (multipart form-data) gagal dengan kode `HTTP 500 Internal Server Error` saat berinteraksi dengan API pihak ketiga Cloudinary.
-- **Hasil aktual:**
-  `HTTP 500 Internal Server Error`. Traceback server menunjukkan exception dari SDK Cloudinary yang tidak tertangkap.
-- **Hasil yang diharapkan:**
-  - Jika kredensial Cloudinary valid: File terunggah, URL CDN tersimpan ke database, dan server mengembalikan `HTTP 200 OK`.
-  - Jika kredensial tidak valid / belum disetel: Server mengembalikan respons error yang aman (`HTTP 422` atau `HTTP 503`) tanpa melempar uncaught 500 exception.
-- **Akar masalah (Dua Penyebab Utama + Bug Penghapusan Gambar Lama):**
-  1. **Konfigurasi Kredensial Cloudinary Tidak Valid:** Variabel environment `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, dan `CLOUDINARY_API_SECRET` pada backend tidak valid / gagal autentikasi saat melakukan handshake ke server Cloudinary.
-  2. **Exception SDK Belum Ditangani dengan Aman:** Pada `app/utils/upload_service.py:45`, fungsi `upload_image` langsung memanggil SDK Cloudinary tanpa membungkusnya dalam try-catch:
-     ```python
-     result = cloudinary.uploader.upload(file, folder=folder, resource_type="image", overwrite=True)
-     ```
-     Sementara controller pada `agency_routes.py` dan `event_routes.py` hanya menangkap exception lokal `UploadError`. Ketika SDK Cloudinary melempar exception otorisasi/jaringan, exception tersebut tidak tertangkap dan langsung memicu HTTP 500.
-  3. **Bug Pembersihan Gambar Lama (`delete_image`):** Pada `app/modules/admin/event_routes.py:247, 277`, pemanggilan dilakukan dengan:
-     ```python
-     if event.poster_url:
-         delete_image(event.poster_url)
-     ```
-     Fungsi `delete_image` di `upload_service.py:58` memanggil `cloudinary.uploader.destroy(public_id)`. Cloudinary mengharapkan string `public_id`, namun kode mengirimkan URL lengkap (`https://res.cloudinary.com/...`). Akibatnya gambar lama gagal terhapus dari cloud dan menumpuk di storage (kesalahan ini disembunyikan oleh blok `except: pass`).
-- **Dampak pada Next.js:**
-  Admin agensi tidak dapat mengunggah logo perusahaan pada halaman profil agensi; poster dan banner event tidak dapat diperbarui.
-- **Dampak pada mobile:**
-  Aksi upload logo pada `admin/agency/[id]/edit.tsx` serta upload poster dan banner pada `admin/event/[id]/edit.tsx` memunculkan alert kegagalan `Upload failed (HTTP 500)`.
-- **Langkah reproduksi:**
-  1. Login sebagai Admin.
-  2. Kirim `POST http://localhost:5000/api/agencies/1/logo` dengan form-data file gambar valid (`logo=@test.png`).
-  3. Amati respons server menghasilkan HTTP 500 akibat kegagalan SDK Cloudinary.
-- **Saran perbaikan:**
-  1. Perbarui nilai environment variable Cloudinary yang valid pada konfigurasi lokal backend.
-  2. Tangani exception Cloudinary di `app/utils/upload_service.py`:
-     ```python
-     try:
-         result = cloudinary.uploader.upload(file, folder=folder, resource_type="image", overwrite=True)
-     except Exception as exc:
-         raise UploadError("Layanan upload media sedang tidak tersedia atau kredensial penyimpanan tidak valid.")
-     ```
-  3. Ekstrak `public_id` dari URL lama sebelum memanggil `delete_image`, atau simpan field `poster_public_id` / `banner_public_id` di database.
-  4. Tambahkan opsi fallback penyimpanan lokal (`local disk storage`) jika environment Cloudinary tidak diatur.
-- **Risiko perubahan:**
-  Rendah. Memperkuat ketahanan aplikasi terhadap kegagalan layanan pihak ketiga.
-- **Kriteria penerimaan:**
-  File gambar berhasil terunggah dan mengembalikan secure URL, atau jika koneksi cloud gagal, server memberikan respons terstruktur dengan kode status 422/503 tanpa crash HTTP 500.
-- **Bukti pengujian:**
-  Inspeksi kode sumber pada `app/modules/admin/agency_routes.py:129-133`, `app/utils/upload_service.py:45-61`, dan `app/modules/admin/event_routes.py:245-280`.
+- **Akar Masalah Sebelumnya:**
+  1. `config.py` dibaca sebelum `load_dotenv()` dan nilai `.env` Cloudinary mengandung spasi depan / awalan `@`.
+  2. `upload_image` tidak membungkus exception Cloudinary SDK sehingga memicu HTTP 500 uncaught.
+  3. `delete_image` dikirim URL penuh alih-alih `public_id`.
+- **Perbaikan yang Diterapkan:**
+  - `TicketWave-BE/app/__init__.py` & `app/config/config.py`: Memanggil `load_dotenv()` sebelum membaca env serta membersihkan spasi dan awalan `@` (`strip().lstrip("@")`) pada `CLOUDINARY_*`.
+  - `TicketWave-BE/app/config/cloudinary_config.py`: Sanitasi kredensial serupa saat inisialisasi.
+  - `TicketWave-BE/app/utils/upload_service.py`: Menambahkan `UploadGatewayError` (HTTP `503`), `is_cloudinary_configured()`, `extract_cloudinary_public_id()`, membungkus upload dengan try/except yang aman tanpa membocorkan secret, serta mengekstrak `public_id` di `delete_image`.
+  - `TicketWave-BE/app/modules/admin/agency_routes.py` & `event_routes.py`: Menangkap `UploadGatewayError` -> `503` dan membersihkan media lama saat mengganti logo/poster/banner.
+- **Hasil Uji Ulang (21 November 2026):**
+  - **Unit test (`test_auth_media_errors.py`):** Lulus (`503` jika belum terkonfigurasi/gagal otorisasi, `extract_cloudinary_public_id` valid, mock `cloudinary.uploader.destroy` memverifikasi penghapusan aset lama).
+  - **Live Browser Upload:** Unggah `sample-media.png` pada pembuatan Agensi `#9` (`POST /api/agencies/9/logo`) dan edit Event `#13` (`POST /api/events/13/poster`) berhasil (`HTTP 200`, menyimpan URL `https://res.cloudinary.com/...`).
 
 ---
 
 ## ISSUE-04 — Ketiadaan Endpoint Daftar Pesanan Pengguna
 
-- **Status:** `OPEN` (Keterbatasan Desain API)
+- **Status:** `RESOLVED — PASS` *(Diimplementasikan & Teruji Lintas Perangkat 21 November 2026)*
 - **Prioritas:** `P2` (Medium-High)
 - **Komponen:** Checkout & Booking Module (`app/modules/ticket/checkout_routes.py`)
-- **Endpoint:** Ketiadaan `GET /api/checkout/my-bookings`
-- **File terkait:**
-  - `app/modules/ticket/checkout_routes.py` (Baris 103)
-  - `app/models/booking.py` (Baris 21)
-- **Gejala:**
-  Backend hanya menyediakan endpoint lookup berbasis kode booking spesifik (`GET /api/checkout/<booking_code>`), tanpa menyediakan endpoint untuk mengambil daftar seluruh transaksi pemesanan milik akun pengguna yang sedang login.
-- **Hasil aktual:**
-  Pengguna login tidak memiliki mekanisme API untuk meminta daftar transaksi mereka dari server.
-- **Hasil yang diharapkan:**
-  Tersedia endpoint terproteksi `GET /api/checkout/my-bookings` yang mengembalikan daftar seluruh pemesanan terkait `user_id` pengguna yang terotentikasi.
-- **Akar masalah:**
-  1. Pada `app/models/booking.py:21`, field `user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True)` sudah tersedia di database.
-  2. Namun saat pembuatan booking di `app/modules/ticket/checkout_routes.py:103`, nilai `user_id` di-hardcode ke `None`:
-     ```python
-     user_id=None,  # TODO: set user_id if logged in (from JWT)
-     ```
-- **Dampak pada Next.js:**
-  Frontend Next.js terpaksa menyimpan daftar kode booking yang pernah dibuat pada `localStorage` browser. Jika pengguna menggunakan peramban lain, berganti laptop, atau membersihkan cache peramban, seluruh daftar pesanan hilang dari riwayat.
-- **Dampak pada mobile:**
-  Aplikasi mobile terpaksa menyimpan daftar kode booking di `AsyncStorage` perangkat. Pesanan yang dibuat melalui web tidak akan muncul pada tab Pesanan aplikasi mobile.
-- **Langkah reproduksi:**
-  Periksa endpoint rute pada `checkout_routes.py`: hanya terdapat `POST /`, `GET /<booking_code>`, `POST /<booking_code>/cancel`, dan `POST /payment/notification`.
-- **Saran perbaikan:**
-  1. Pada `create_checkout` di `checkout_routes.py`: Periksa apakah ada header `Authorization: Bearer <token>`. Jika ada dan valid, isi `booking.user_id = current_user_id`.
-  2. Buat endpoint baru pada `checkout_routes.py`:
-     ```python
-     @checkout_bp.get("/my-bookings")
-     @jwt_required()
-     def get_my_bookings():
-         current_user_id = get_jwt_identity()
-         bookings = Booking.query.filter_by(user_id=current_user_id).order_by(Booking.created_at.desc()).all()
-         return success_response([b.to_dict() for b in bookings], "Daftar pesanan berhasil diambil")
-     ```
-- **Risiko perubahan:**
-  Rendah. Merupakan penambahan fitur non-breaking.
-- **Kriteria penerimaan:**
-  Pengguna yang login dapat melakukan sinkronisasi riwayat pesanan di seluruh perangkat secara konsisten melalui API.
-- **Bukti pengujian:**
-  Inspeksi kode sumber pada `app/modules/ticket/checkout_routes.py:103`.
+- **Endpoint Baru:** `GET /api/checkout/my-bookings`
+- **Akar Masalah Sebelumnya:** `user_id` di-hardcode `None` dan belum ada endpoint riwayat pesanan per akun sehingga riwayat Next.js hanya bergantung pada bookmark `localStorage` per browser.
+- **Perbaikan & Hasil Uji Ulang:**
+  - `TicketWave-BE/app/modules/ticket/checkout_routes.py`: Mengisi `user_id` dari JWT terverifikasi saat login, menambahkan `GET /api/checkout/my-bookings` (`@jwt_required()`, read-only, menolak `officer` `403`, mengembalikan booking beserta event, ticket_type, dan tiket ter-serialisasi), serta menjaga keamanan pesanan Guest dengan `X-Guest-Token` HMAC & verifikasi `X-Buyer-Email`.
+  - Frontend Next.js (`web/app/lib/bookingStorage.js`, `user/pesanan/page.jsx`, `user/ticket/page.jsx`): Akun login langsung memuat dari `GET /api/checkout/my-bookings`; teruji live browser pada origin berbeda `http://127.0.0.1:3000` dengan penyimpanan lokal kosong tetap menampilkan seluruh booking & tiket (`TKTW-20261121-703785`, `TKTW-20261121-2DF8A7`) serta lulus unit test `test_booking_access_control_my_bookings_guest_verification_and_ticket_qr_lifecycle`.
 
 ---
 
@@ -402,79 +352,28 @@ Dokumen ini adalah **sumber tunggal kebenaran (single source of truth)** untuk s
 
 ## ISSUE-08 — Bug Kalkulasi Fase Harga Tiket dan Diskon pada Checkout & Katalog
 
-- **Status:** `OPEN` (Aktif pada Kode Sumber Aktual)
+- **Status:** `RESOLVED — PASS` *(Diperbaiki & Teruji Pecahan Desimal 12.5% Live hingga Midtrans Snap 21 November 2026)*
 - **Prioritas:** `P1` (High)
-- **Komponen:** Pricing Utility (`app/utils/pricing.py`) & Checkout/Public Modules
-- **Endpoint:**
-  - `POST /api/checkout`
-  - `GET /api/public/events`
-  - `GET /api/public/events/<event_id>`
-- **File terkait:**
-  - `app/utils/pricing.py` (Baris 31-71)
-  - `app/modules/ticket/checkout_routes.py` (Baris 90)
-  - `app/modules/public/event_routes.py` (Baris 95, 149)
-- **Gejala:**
-  Setiap transaksi pemesanan tiket yang sedang berada dalam fase harga diskon (misalnya fase *Early Bird* atau *Presale*) mengalami error fatal saat checkout dengan kode status `HTTP 500 Internal Server Error`.
-- **Hasil aktual:**
-  `HTTP 500 Internal Server Error`. Traceback server Flask melempar:
-  `TypeError: int() argument must be a string, a bytes-like object or a real number, not 'NoneType'`
-- **Hasil yang diharapkan:**
-  Harga tiket dipotong sesuai persentase diskon fase aktif, harga satuan (`unit_price`) dikalkulasikan secara tepat, dan booking berhasil dibuat dengan status `HTTP 201 Created`.
-- **Akar masalah:**
-  Terdapat **ketidaksesuaian kontrak parameter fungsi (Signature Mismatch)** antara fungsi helper dengan pemanggilnya:
-  1. Definisi fungsi pada `app/utils/pricing.py` baris 31:
-     ```python
-     def calculate_final_price(ticket_type_id, check_date=None):
-         ticket_type = TicketType.query.get(ticket_type_id)
-         if not ticket_type:
-             return None
-         # mengembalikan dict: {"base_price": ..., "final_price": ...}
-     ```
-     Fungsi ini mengharapkan parameter pertama adalah **`ticket_type_id` (integer)** dan mengembalikan **dictionary** atau `None`.
-  2. Namun pada `app/modules/ticket/checkout_routes.py` baris 90, fungsi dipanggil dengan parameter harga dan persentase:
-     ```python
-     unit_price = int(calculate_final_price(float(ticket_type.base_price), active_phase.discount_percent))
-     ```
-     Karena nilai `float(ticket_type.base_price)` (contoh: `250000.0`) dikirim sebagai ID, pencarian `TicketType.query.get(250000.0)` gagal dan mengembalikan `None`.
-  3. Konversi `int(None)` menghasilkan `TypeError` fatal.
-  4. Kesalahan pemanggilan identik juga terjadi pada `app/modules/public/event_routes.py` baris 95 dan 149:
-     ```python
-     price_from = calculate_final_price(float(cheapest_ticket.base_price), active_phase.discount_percent)
-     final_price = calculate_final_price(float(tt.base_price), active_phase.discount_percent)
-     ```
-     Menyebabkan field `price_from` dan `final_price` pada katalog event publik bernilai `None` saat fase diskon sedang aktif.
-- **Dampak pada Next.js:**
-  Pengguna web Next.js tidak dapat melakukan checkout tiket apapun yang memiliki fase diskon aktif.
-- **Dampak pada mobile:**
-  Pengguna mobile Expo mengalami kegagalan transaksi checkout pada tiket bertanda Early Bird / Presale.
-- **Langkah reproduksi:**
-  1. Buat event dan tambahkan tiket dengan harga dasar misal `Rp 100.000`.
-  2. Tambahkan fase tiket (*early_bird*) dengan tanggal aktif hari ini dan diskon `20%`.
-  3. Lakukan checkout melalui `POST /api/checkout` dengan kuantitas 1.
-  4. Amati crash `TypeError` pada konsol server Flask.
-- **Saran perbaikan:**
-  Ubah fungsi pemanggilan di `checkout_routes.py:90` agar mengambil nilai `final_price` dari hasil kalkulasi yang benar:
-  ```python
-  # SEBELUM:
-  unit_price = int(calculate_final_price(float(ticket_type.base_price), active_phase.discount_percent))
-
-  # SESUDAH:
-  calc = calculate_final_price(ticket_type.id)
-  unit_price = int(calc["final_price"]) if calc else int(ticket_type.base_price)
-  ```
-  Dan terapkan perbaikan serupa pada `app/modules/public/event_routes.py` baris 95 dan 149.
-- **Risiko perubahan:**
-  Rendah. Menyelesaikan bug kritis pada inti bisnis proses pemesanan tiket.
-- **Kriteria penerimaan:**
-  Pemesanan tiket berfase diskon menghasilkan total harga yang terpotong secara benar dan tersimpan ke tabel `bookings` dengan status 201 Created.
-- **Bukti pengujian:**
-  Inspeksi kode sumber aktual pada `app/utils/pricing.py:31-50` vs `app/modules/ticket/checkout_routes.py:87-92`.
+- **Komponen:** Pricing Utility (`app/utils/pricing.py`), Booking Model (`app/models/booking.py`), Checkout & Public Modules
+- **Endpoint:** `POST /api/checkout`, `GET /api/public/events`, `GET /api/public/events/<event_id>`
+- **Akar Masalah Sebelumnya:**
+  1. `public/event_routes.py` memanggil `calculate_final_price(float(base_price), discount_percent)` alih-alih `calculate_final_price(ticket_type.id)`.
+  2. SQLite menolak binding objek Python `Decimal` (`TicketPhase.discount_percent`) ke kolom `Booking.discount_percent` bertipe `Integer` (`sqlite3.ProgrammingError`), serta pembagian integer/float berisiko selisih presisi saat persentase pecahan dipakai.
+- **Perbaikan yang Diterapkan:**
+  - `TicketWave-BE/app/utils/pricing.py`: Perhitungan `Decimal` + `ROUND_HALF_UP` ke Rupiah bulat (`discount_percent`, `discount_amount`, `final_price`).
+  - `TicketWave-BE/app/models/booking.py` + Alembic `8b4e2f1a9c01`: Kolom `bookings.discount_percent` diubah ke `db.Numeric(5, 2)`.
+  - `TicketWave-BE/app/modules/public/event_routes.py` & `app/modules/ticket/checkout_routes.py`: Memanggil `calculate_final_price(tt.id)` dan meneruskan `discount_amount` serta `active_phase.discount_percent` bertipe float akurat ke JSON & Midtrans `gross_amount`.
+  - Next.js (`eventDisplay.js`, `checkout.js`, `CheckoutSummary.jsx`, Admin Phase form `step="0.01"`): Memprioritaskan `final_price` Backend serta menampilkan Harga Normal, Diskon Fase, dan Total resmi.
+- **Catatan Fitur Terpisah:** *Diskon khusus akun login* tetap berstatus `BLOCKED` dan ditahan hingga keputusan nominal/persentase dan aturan penggabungan dengan Early Bird disetujui.
+- **Hasil Uji Ulang (21 November 2026):**
+  - Unit test `test_fractional_phase_discount_consistency_across_catalog_detail_checkout_and_snap` (`12.5%` pada `Rp 150.000` -> `Rp 131.250`, qty 2 -> `Rp 262.500`) lulus.
+  - Live browser Event `#13` (`Regular` normal `Rp 160.000`, `early_bird` `12.5%`): Katalog (`Mulai dari Rp 140.000`), Detail (`Rp 140.000`), Checkout Summary Guest (`Rp 140.000`) & User (`2x` `Rp 280.000`), booking DB, dan Midtrans Sandbox Snap (`Rp140.000` & `Rp280.000`) identik seluruhnya.
 
 ---
 
 ## ISSUE-09 — Simulasi Dummy URL Pembayaran Midtrans Snap Tanpa Integrasi Riil API
 
-- **Status:** `PARTIALLY RESOLVED — SANDBOX VERIFIED` *(Lingkungan Sandbox terverifikasi nyata; integrasi Production masih memerlukan kredensial dan verifikasi Production terpisah)*
+- **Status:** `RESOLVED — PASS (SANDBOX)` *(Integrasi Sandbox & jalur return Guest/User terverifikasi nyata hingga Permata VA Simulator; deploy Production terpisah dengan kredensial Production)*
 - **Prioritas:** `P2` (Medium-High)
 - **Komponen:** Checkout & Payment Gateway Module (`app/modules/ticket/checkout_routes.py`, `app/modules/ticket/schema.py`)
 - **Endpoint:** `POST /api/checkout`, `GET /api/checkout/<booking_code>` (read-only), `POST /api/checkout/<booking_code>/sync-payment-status` (Sandbox/dev only)
@@ -595,227 +494,56 @@ Dokumen ini adalah **sumber tunggal kebenaran (single source of truth)** untuk s
 
 ---
 
-## ISSUE-12 — Layanan Email Verifikasi & Reset Password Hanya Berupa Output Konsol Log (SMTP Belum Terpasang)
+## ISSUE-12 — Layanan Email Verifikasi & Reset Password (Helper SMTP Terpasang, Live SMTP `BLOCKED` Tanpa Kredensial)
 
-- **Status:** `OPEN` (Keterbatasan Desain API)
+- **Status:** `CODE IMPLEMENTED — LIVE SMTP DELIVERY BLOCKED`
 - **Prioritas:** `P3` (Medium)
-- **Komponen:** Authentication & Email Notification (`app/modules/auth/routes.py`)
-- **Endpoint:**
-  - `POST /api/auth/register`
-  - `POST /api/auth/request-password-reset`
-- **File terkait:**
-  - `app/modules/auth/routes.py` (Baris 76-87, 235-246)
-- **Gejala:**
-  Saat pengguna melakukan registrasi akun atau meminta reset password, email verifikasi dan tautan ubah sandi tidak pernah dikirimkan ke kotak masuk email pengguna.
-- **Akar masalah:**
-  Pada `app/modules/auth/routes.py`, pengiriman email nyata belum dihubungkan ke server SMTP (seperti Flask-Mail atau SendGrid):
-  ```python
-  # Baris 76-81 auth/routes.py:
-  # TODO: Kirim email verification (SMTP belum setup)
-  # Untuk sekarang, cuma log token-nya
-  print("EMAIL VERIFICATION (Log Only - SMTP belum setup)")
-  print(f"To: {new_user.email}")
-  print(f"Verification Link: {verification_link}")
-  ```
-  Hal serupa terjadi pada permintaan reset password (baris 235-245).
-- **Dampak pada Next.js:**
-  Pengguna web tidak dapat melakukan aktivasi mandiri dari email nyata; verifikasi email harus di-bypass atau mengandalkan link di log server.
-- **Dampak pada mobile:**
-  Pengguna mobile harus memasukkan token verifikasi secara manual yang disalin dari log terminal pengembang.
-- **Langkah reproduksi:**
-  1. Registrasi akun baru dengan email aktif.
-  2. Periksa kotak masuk / spam email; tidak ada pesan masuk dari sistem TicketWave.
-  3. Periksa terminal Flask; token tercetak pada stdout log.
-- **Saran perbaikan:**
-  1. Konfigurasi ekstensi email (misal `Flask-Mailman` atau integrasi SMTP).
-  2. Ambil kredensial SMTP (`MAIL_SERVER`, `MAIL_PORT`, `MAIL_USERNAME`, `MAIL_PASSWORD`) dari environment variable.
-  3. Kirimkan email HTML responsif yang berisi tautan aktivasi dan reset password resmi.
-- **Risiko perubahan:**
-  Rendah.
-- **Kriteria penerimaan:**
-  Email verifikasi dan reset password terkirim secara nyata ke alamat email penerima.
-- **Bukti pengujian:**
-  Inspeksi kode sumber pada `app/modules/auth/routes.py:76-87` dan `app/modules/auth/routes.py:235-246`.
+- **Komponen:** Authentication & Email Utility (`app/utils/email_service.py`, `app/modules/auth/routes.py`, `app/config/config.py`)
+- **Endpoint:** `POST /api/auth/register`, `POST /api/auth/request-password-reset`
+- **Perbaikan yang Diterapkan:** Membuat `app/utils/email_service.py` berbasis `smtplib` + `email.message` stdlib TLS (`SMTP_HOST`, `SMTP_PORT`, `SMTP_EMAIL`, `SMTP_PASSWORD`, `SMTP_USE_TLS`, `SMTP_FROM_NAME`) dengan fallback `log_only` aman tanpa mengekspos token/password di respons HTTP maupun dokumentasi, lalu menghubungkannya ke `register` & `request_password_reset`.
+- **Hasil Uji Ulang (21 November 2026):** Unit test `test_email_service_log_fallback_and_password_reset_response` lulus (`PASS` untuk jalur kode & respons `email_delivery: "log_only"`); pengiriman email inbox SMTP live berstatus **`BLOCKED`** karena `.env` belum dikonfigurasi dengan kredensial `SMTP_HOST`/`SMTP_EMAIL`/`SMTP_PASSWORD`.
 
 ---
 
-## ISSUE-13 — Status Code Mismatch pada Handler Helper `error_response` di Berbagai Route & Decorator
+## ISSUE-13 — Status Code Mismatch pada Handler Helper `error_response`
 
-- **Status:** `OPEN` (Bug Logika & Kepatuhan REST API)
-- **Prioritas:** `P3` (Medium)
-- **Komponen:** Response Helper (`app/utils/responses.py`) & Decorator / Controller Routes
-- **Endpoint:**
-  - Seluruh rute berproteksi `@role_required` dan `@email_verified_required`
-  - `GET /api/public/events/<event_id>`
-  - `POST /api/checkout`
-  - `GET /api/checkout/<booking_code>`
-- **File terkait:**
-  - `app/utils/responses.py` (Baris 23-28)
-  - `app/utils/decorators.py` (Baris 47-50, 83-86)
-  - `app/modules/public/event_routes.py` (Baris 73, 80, 126, 130)
-  - `app/modules/ticket/checkout_routes.py` (Baris 70, 75, 164, 202)
-- **Gejala:**
-  Saat terjadi kesalahan akses terlarang (Forbidden) atau data tidak ditemukan (Not Found), server Flask mengembalikan status HTTP `400 Bad Request` bukannya `403 Forbidden` atau `404 Not Found`. Nilai angka status code (403 atau 404) justru masuk ke dalam field JSON `errors`.
-- **Hasil aktual:**
-  Header HTTP respons: `HTTP/1.1 400 Bad Request`  
-  Body JSON:
-  ```json
-  {
-    "success": false,
-    "message": "Access forbidden. Required role: admin",
-    "errors": 403
-  }
-  ```
-- **Hasil yang diharapkan:**
-  Header HTTP respons: `HTTP/1.1 403 Forbidden`  
-  Body JSON:
-  ```json
-  {
-    "success": false,
-    "message": "Access forbidden. Required role: admin",
-    "errors": null
-  }
-  ```
-- **Akar masalah:**
-  Definisi fungsi pada `app/utils/responses.py:23`:
-  ```python
-  def error_response(message="Terjadi kesalahan", errors=None, status_code=400):
-      return jsonify({
-          "success": False,
-          "message": message,
-          "errors": errors,
-      }), status_code
-  ```
-  Fungsi ini memiliki urutan parameter posisi: `(message, errors, status_code)`.  
-  Namun pada pemanggil di `decorators.py:47`:
-  ```python
-  return error_response(f"Access forbidden. Required role: {', '.join(roles)}", 403)
-  ```
-  Angka `403` dikirim sebagai argumen posisi kedua, sehingga masuk ke parameter `errors = 403`, sedangkan parameter `status_code` tidak terisi dan menggunakan nilai default `400`.  
-  Pola pemanggilan keliru yang sama terjadi pada:
-  - `decorators.py:83`: `error_response("Email verification required...", 403)` -> status code 400.
-  - `public/event_routes.py:126`: `error_response("Event not found", 404)` -> status code 400.
-  - `public/event_routes.py:130`: `error_response("Event is not available for sale", 403)` -> status code 400.
-  - `checkout_routes.py:70`: `error_response("Event not found", 404)` -> status code 400.
-  - `checkout_routes.py:164`: `error_response("Booking not found", 404)` -> status code 400.
-- **Dampak pada Next.js:**
-  Interceptor API pada frontend membaca seluruh error otorisasi dan resource not found sebagai error 400 generik, menyulitkan branching logika (misal redirect ke login saat 401/403).
-- **Dampak pada mobile:**
-  Mobile client `src/api/client.ts` harus mengecek keyword teks di dalam payload karena status HTTP yang diterima selalu 400.
-- **Langkah reproduksi:**
-  1. Login dengan akun role `user`.
-  2. Akses endpoint admin `GET /api/agencies`.
-  3. Periksa header status respons yang dikembalikan server: menghasilkan status 400 bukannya 403.
-- **Saran perbaikan:**
-  Ubah pemanggilan di seluruh file tersebut dengan keyword argument eksplisit:
-  ```python
-  # SEBELUM:
-  return error_response("Access forbidden", 403)
-
-  # SESUDAH:
-  return error_response("Access forbidden", status_code=403)
-  ```
-  Atau perbarui signature `error_response` pada `app/utils/responses.py` menjadi:
-  ```python
-  def error_response(message="Terjadi kesalahan", status_code=400, errors=None):
-  ```
-- **Risiko perubahan:**
-  Rendah. Memastikan kepatuhan terhadap standar kode status HTTP RESTful.
-- **Kriteria penerimaan:**
-  Respons server untuk akses terlarang mengirimkan status code HTTP 403, dan data tidak ditemukan mengirimkan status code HTTP 404.
-- **Bukti pengujian:**
-  Inspeksi kode sumber pada `app/utils/responses.py:23` vs `app/utils/decorators.py:47-50` dan `app/modules/public/event_routes.py:126`.
+- **Status:** `RESOLVED — PASS` *(Diperbaiki & Teruji HTTP 401/403/404/409 21 November 2026)*
+- **File Diubah:** `app/utils/decorators.py`, `app/modules/public/event_routes.py`, `app/modules/auth/routes.py`, `app/modules/ticket/checkout_routes.py`.
+- **Akar Masalah Sebelumnya:** `error_response(message="...", errors=None, status_code=400)` dipanggil dengan angka status HTTP di argumen posisi kedua sehingga masuk ke `errors` dan HTTP status terkirim `400`.
+- **Perbaikan & Hasil Uji Ulang:** Seluruh pemanggilan `error_response(..., 4xx)` diubah menggunakan `status_code=4xx` (`401`/`403`/`404`/`409`). Diverifikasi lewat unit test (`test_auth_media_errors.py`) maupun pengujian browser (`403` wrong user, `404` not found).
 
 ---
 
 ## ISSUE-14 — Ketiadaan Endpoint Pembaruan Profil Pengguna (`PUT /api/auth/me`)
 
-- **Status:** `OPEN` (Keterbatasan Desain API)
+- **Status:** `RESOLVED — PASS` *(Diimplementasikan & Teruji Live Browser + Unit Test 21 November 2026)*
 - **Prioritas:** `P3` (Medium)
-- **Komponen:** Authentication & User Profile (`app/modules/auth/routes.py`)
-- **Endpoint:** Ketiadaan `PUT /api/auth/me` atau `PATCH /api/auth/me`
-- **File terkait:**
-  - `app/modules/auth/routes.py` (Baris 163-178)
-  - `app/models/user.py`
-- **Gejala:**
-  Pengguna tidak dapat memperbarui data profil akun mereka (seperti nama lengkap dan nomor telepon) dari halaman pengaturan profil.
-- **Hasil aktual:**
-  Backend hanya menyediakan `GET /api/auth/me`. Request HTTP `PUT` atau `PATCH` ke `/api/auth/me` menghasilkan `HTTP 405 Method Not Allowed`.
-- **Hasil yang diharapkan:**
-  Tersedia endpoint `PUT /api/auth/me` terproteksi `@jwt_required()` yang memungkinkan pengguna memperbarui nama dan nomor telepon aktif.
-- **Akar masalah:**
-  Rute otentikasi hanya mengimplementasikan pembacaan data profil (`get_current_user`), tanpa fungsi pemutakhiran record `User` di basis data.
-- **Dampak pada Next.js:**
-  Formulir edit profil pada `web/app/user/profile/page.jsx` dan `settings/page.jsx` tidak dapat memutakhirkan data ke database.
-- **Dampak pada mobile:**
-  Tab Profil aplikasi mobile (`(tabs)/profile.tsx`) hanya menampilkan identitas akun secara read-only.
-- **Langkah reproduksi:**
-  Kirimkan request `PUT http://localhost:5000/api/auth/me` dengan Authorization header dan body `{"name": "Nama Baru"}`. Server merespons `405 Method Not Allowed`.
-- **Saran perbaikan:**
-  Tambahkan handler pembaruan profil di `app/modules/auth/routes.py`:
-  ```python
-  @auth_bp.put("/me")
-  @jwt_required()
-  def update_current_user():
-      current_user_id = get_jwt_identity()
-      user = User.query.get(int(current_user_id))
-      data = request.get_json() or {}
-      if "name" in data: user.name = data["name"].strip()
-      if "phone" in data: user.phone = data["phone"].strip()
-      db.session.commit()
-      return success_response("Profile updated successfully", user.to_dict())
-  ```
-- **Risiko perubahan:**
-  Rendah.
-- **Kriteria penerimaan:**
-  Request `PUT /api/auth/me` berhasil memperbarui data nama/telepon dan mengembalikan data pengguna termutakhir dengan status 200 OK.
-- **Bukti pengujian:**
-  Inspeksi kode sumber pada `app/modules/auth/routes.py:163-178` (hanya ada dekorator `@auth_bp.get("/me")`).
+- **Komponen:** Authentication & User Profile (`app/modules/auth/schema.py`, `app/modules/auth/routes.py`) & Frontend (`web/app/user/profile/page.jsx`)
+- **Akar Masalah Sebelumnya:** Hanya tersedia `GET /api/auth/me`; permintaan `PUT` menghasilkan HTTP `405`.
+- **Perbaikan & Hasil Uji Ulang:** Ditambahkan `UpdateProfileSchema` dan `@auth_bp.put("/me")` (`@jwt_required()`) untuk memperbarui `name` dan `phone` (menolak duplikat nomor telepon dengan `409`). Teruji lewat unit test (`test_auth_media_errors.py`) dan live browser (`E2E User1 Updated` / `089920269999` tersimpan setelah reload `/user/profile`).
 
 ---
 
 ## ISSUE-15 — Ketiadaan Mekanisme Revokasi Sesi Server-Side & Endpoint Logout (`POST /api/auth/logout`)
 
-- **Status:** `OPEN` (Keterbatasan Desain API)
+- **Status:** `RESOLVED — PASS` *(Diimplementasikan & Teruji Unit Test + Live DB Blocklist 21 November 2026)*
 - **Prioritas:** `P3` (Medium)
-- **Komponen:** Authentication & Token Revocation (`app/modules/auth/routes.py`)
-- **Endpoint:** Ketiadaan `POST /api/auth/logout`
-- **File terkait:**
-  - `app/modules/auth/routes.py`
-  - `app/config/extensions.py` (jwt init)
-- **Gejala:**
-  Saat pengguna melakukan logout di peramban atau aplikasi mobile, token JWT yang masih aktif tidak dicabut atau diblokir di sisi server. Token yang telah dicuri atau disadap tetap dapat digunakan untuk mengakses data hingga masa kedaluwarsa alami berakhir (1 jam untuk access token, 30 hari untuk refresh token).
-- **Hasil aktual:**
-  Backend tidak menyediakan endpoint `POST /api/auth/logout`. Logout hanya dilakukan secara pasif di klien dengan menghapus token dari `localStorage` atau `AsyncStorage`.
-- **Hasil yang diharapkan:**
-  Tersedia endpoint `POST /api/auth/logout` yang mencatat JTI (*JWT ID*) token ke dalam tabel blocklist (misalnya menggunakan Redis atau tabel basis data `token_blocklist`), serta callback `@jwt.token_in_blocklist_loader` untuk menolak setiap token yang telah di-logout.
-- **Akar masalah:**
-  Backend menerapkan autentikasi JWT murni stateless tanpa memelihara daftar token yang dibatalkan.
-- **Dampak pada Next.js:**
-  Pengguna yang telah logout dari satu browser tidak dapat membatalkan sesi aktif di perangkat lain secara terpusat.
-- **Dampak pada mobile:**
-  Aksi logout pada aplikasi mobile tidak mengirimkan instruksi pembatalan sesi ke backend.
-- **Langkah reproduksi:**
-  1. Login dan salin `access_token`.
-  2. Lakukan logout di aplikasi.
-  3. Kirim request `GET /api/auth/me` menggunakan token yang disalin tadi melalui cURL/Postman.
-  4. Server tetap mengembalikan `HTTP 200 OK` (token masih diakui valid).
-- **Saran perbaikan:**
-  1. Implementasikan model `TokenBlocklist(id, jti, created_at)`.
-  2. Daftarkan callback JWT blocklist pada `app/config/extensions.py`:
-     ```python
-     @jwt.token_in_blocklist_loader
-     def check_if_token_revoked(jwt_header, jwt_payload):
-         jti = jwt_payload["jti"]
-         return TokenBlocklist.query.filter_by(jti=jti).first() is not None
-     ```
-  3. Tambahkan endpoint `POST /api/auth/logout` di `app/modules/auth/routes.py` yang menyimpan JTI token ke basis data.
-- **Risiko perubahan:**
-  Sedang. Memerlukan penambahan tabel database atau store in-memory.
-- **Kriteria penerimaan:**
-  Setelah memanggil `POST /api/auth/logout`, token yang bersangkutan langsung ditolak dengan status HTTP 401 saat digunakan pada request berikutnya.
-- **Bukti pengujian:**
-  Inspeksi rute otentikasi pada `app/modules/auth/routes.py` menunjukkan tidak adanya handler `logout` dan tidak ada konfigurasi blocklist loader pada `app/config/extensions.py`.
+- **Komponen:** `app/models/revoked_token.py`, `app/__init__.py` (`token_in_blocklist_loader`), `app/modules/auth/routes.py`, Alembic `8b4e2f1a9c01`, & `web/app/context/AuthContext.jsx`
+- **Akar Masalah Sebelumnya:** Autentikasi JWT stateless tanpa pencatatan JTI blocklist maupun endpoint `POST /api/auth/logout`.
+- **Perbaikan & Hasil Uji Ulang:** Ditambahkan tabel `revoked_tokens`, callback `@jwt.token_in_blocklist_loader`, serta `POST /api/auth/logout` yang mencabut `access_token` maupun `refresh_token` opsional. Unit test memverifikasi token revoked ditolak `HTTP 401` pada `/api/auth/me`, `/api/auth/refresh`, dan `/api/checkout/my-bookings`; setelah uji browser live tercatat `revoked_tokens = 14` di `instance/dev.db`.
+
+---
+
+## Hasil Pengujian Terintegrasi Akhir (21 November 2026)
+
+- **Backend Automated Suite (`unittest`):** `26/26` **PASS** (`Ran 26 tests in 11.668s — OK`), mencakup Checkout Midtrans, Booking Access Control + `/my-bookings`, Diskon Pecahan `12.5%`, Officer Scan (unpaid `pending`, `finished`/`archived`, `event_end_time`, duplikat `409`), `PUT /api/auth/me`, `POST /api/auth/logout`, SMTP fallback, Cloudinary `503`/`destroy` mock, dan status HTTP `401`/`403`/`404`/`409`.
+- **Frontend Automated Checks (`web`):** `npm test` (`8/8 PASS`), `npm run lint` (`0` errors), `npx tsc --noEmit` (`0` errors), `npm run build` (exit `0`, `27` routes).
+- **Live Browser + Midtrans Sandbox E2E (`[E2E-WEB-FINAL-20261121]`):**
+  - Admin CRUD Agency `#9`, Event `#13` (`event_end_time` `23:55`), Phase `#3` (`12.5%`), Upload Logo/Poster Cloudinary: **PASS**.
+  - Guest Checkout (`Rp 140.000` match di Katalog/Detail/Summary/Snap) + `/payment/finish` non-login return + Fresh-Origin Guest Email Verification (`401`/`403` no leak -> verified `200`): **PASS**.
+  - User Paid Permata VA Simulator (`Rp 280.000`, `2x`) -> aktifkan QR `TKT-7E993B23` & `TKT-B47F7BDC` + Exit Without Paying (`/payment/unfinish` + reuse URL tanpa duplikasi) + Cross-Device `/user/pesanan` & `/user/ticket` (`127.0.0.1:3000`) + `/user/profile` update + Logout & Wrong-User `403`: **PASS**.
+  - Officer Role Isolation + Unpaid `400` + Upload QR PNG `e2e-ticket-1.png` Check-In `1x` (`33 -> 34`) + Duplicate `409` + Event `finished` `400` + Pelestarian Riwayat User: **PASS**.
+  - Kamera fisik Officer live webcam: **NOT TESTED**; Live SMTP, Live Public HTTPS Webhook, Diskon Khusus Akun, serta modul terencana (`ISSUE-05`–`ISSUE-07`, `ISSUE-11`, Refund): **BLOCKED**.
 
 ---
 *Dokumentasi ini dikonsolidasikan dan dipelihara di TicketWave-FE sebagai referensi utama audit integrasi.*

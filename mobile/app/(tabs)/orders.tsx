@@ -14,12 +14,22 @@ import { Receipt, RefreshCw, Search } from 'lucide-react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
 
 import { useAppTheme } from '../../src/context/ThemeContext';
-import { cancelBooking, fetchBookingDetail } from '../../src/api/endpoints';
+import { useAuth } from '../../src/context/AuthContext';
 import {
+  cancelBooking,
+  fetchBookingDetail,
+  fetchMyBookings,
+} from '../../src/api/endpoints';
+import {
+  getGuestTokenForBooking,
   getSavedBookingEntries,
   saveBookingEntry,
 } from '../../src/utils/storage';
-import { openMidtransPaymentBrowser } from '../../src/utils/payment';
+import {
+  getMobilePaymentReturnUrl,
+  openMidtransPaymentBrowser,
+  resolveOrderPaymentState,
+} from '../../src/utils/payment';
 import { BookingDetailResponse } from '../../src/types';
 import { Header } from '../../src/components/common/Header';
 import { Input } from '../../src/components/common/Input';
@@ -30,15 +40,18 @@ import { OrderCardSkeleton } from '../../src/components/common/Skeleton';
 
 const ORDER_FILTERS = [
   { id: 'all', label: 'Semua' },
-  { id: 'pending_payment', label: 'Menunggu Bayar' },
-  { id: 'paid', label: 'Lunas' },
-  { id: 'cancelled', label: 'Dibatalkan' },
+  { id: 'pending_payment', label: 'Menunggu Pembayaran' },
+  { id: 'paid', label: 'Dibayar' },
+  { id: 'event_ended', label: 'Acara Selesai' },
   { id: 'expired', label: 'Kedaluwarsa' },
+  { id: 'cancelled', label: 'Dibatalkan' },
 ];
 
 export default function OrdersScreen() {
   const router = useRouter();
   const { colors, brand } = useAppTheme();
+  const { user, isAuthenticated, loading: authLoading } = useAuth();
+  const isAccountHistory = Boolean(isAuthenticated && user && user.role !== 'officer');
 
   const [bookings, setBookings] = useState<BookingDetailResponse[]>([]);
   const [loading, setLoading] = useState(true);
@@ -46,10 +59,19 @@ export default function OrdersScreen() {
   const [statusFilter, setStatusFilter] = useState('all');
 
   const [lookupCode, setLookupCode] = useState('');
+  const [lookupEmail, setLookupEmail] = useState('');
   const [lookupLoading, setLookupLoading] = useState(false);
   const [lookupMessage, setLookupMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
   const fetchOrders = useCallback(async () => {
+    if (isAccountHistory) {
+      const res = await fetchMyBookings();
+      if (res.success && Array.isArray(res.data?.bookings)) {
+        return res.data.bookings;
+      }
+      return [];
+    }
+
     const entries = await getSavedBookingEntries();
     if (entries.length === 0) {
       return [];
@@ -57,16 +79,18 @@ export default function OrdersScreen() {
 
     const settled = await Promise.allSettled(
       entries.map(async (entry): Promise<BookingDetailResponse> => {
-        const res = await fetchBookingDetail(entry.booking_code);
+        const res = await fetchBookingDetail(entry.booking_code, {
+          guestToken: entry.guest_token,
+          silent: true,
+        });
         if (res.success && res.data?.booking) {
-          return {
-            ...res.data,
-            booking: {
-              ...res.data.booking,
-              payment_url: res.data.booking.payment_url || entry.payment_url || null,
-              recipient_email: res.data.booking.recipient_email || entry.recipient_email || null,
-            },
-          };
+          if (res.data.guest_access_token && res.data.guest_access_token !== entry.guest_token) {
+            await saveBookingEntry({
+              booking_code: entry.booking_code,
+              guest_token: res.data.guest_access_token,
+            });
+          }
+          return res.data;
         }
         throw new Error('Not found');
       })
@@ -75,9 +99,10 @@ export default function OrdersScreen() {
     return settled
       .filter((r): r is PromiseFulfilledResult<BookingDetailResponse> => r.status === 'fulfilled')
       .map((r) => r.value);
-  }, []);
+  }, [isAccountHistory]);
 
   useEffect(() => {
+    if (authLoading) return;
     let ignore = false;
     fetchOrders()
       .then((items) => {
@@ -100,7 +125,7 @@ export default function OrdersScreen() {
     return () => {
       ignore = true;
     };
-  }, [fetchOrders]);
+  }, [authLoading, fetchOrders]);
 
   useFocusEffect(
     useCallback(() => {
@@ -136,20 +161,27 @@ export default function OrdersScreen() {
 
   const handleLookup = async () => {
     const code = lookupCode.trim().toUpperCase();
+    const buyerEmail = lookupEmail.trim();
     if (!code) return;
 
     setLookupLoading(true);
     setLookupMessage(null);
     try {
-      const res = await fetchBookingDetail(code);
+      const guestToken = await getGuestTokenForBooking(code);
+      const res = await fetchBookingDetail(code, {
+        guestToken,
+        buyerEmail: buyerEmail || null,
+        silent: true,
+      });
       if (res.success && res.data?.booking) {
         await saveBookingEntry({
           booking_code: res.data.booking.booking_code,
-          payment_url: res.data.booking.payment_url || null,
+          guest_token: res.data.guest_access_token || guestToken || null,
           recipient_email: res.data.booking.recipient_email || res.data.booking.buyer_email,
           event_name: res.data.event?.name,
         });
         setLookupCode('');
+        setLookupEmail('');
         setLookupMessage({
           type: 'success',
           text: `Pesanan ${res.data.booking.booking_code} berhasil ditemukan.`,
@@ -157,9 +189,15 @@ export default function OrdersScreen() {
         onRefresh();
       }
     } catch (err: any) {
+      const reqMode = err?.data?.errors?.requires_verification;
       setLookupMessage({
         type: 'error',
-        text: err?.message || `Kode booking "${code}" tidak ditemukan.`,
+        text:
+          reqMode === 'guest_email'
+            ? 'Masukkan Email Pembeli untuk memverifikasi pesanan guest ini.'
+            : reqMode === 'login'
+            ? 'Pesanan ini terdaftar atas akun pengguna. Silakan login terlebih dahulu.'
+            : err?.message || `Kode booking "${code}" tidak ditemukan.`,
       });
     } finally {
       setLookupLoading(false);
@@ -169,7 +207,8 @@ export default function OrdersScreen() {
   const performCancelOrder = async (bookingCode: string) => {
     setLookupMessage(null);
     try {
-      await cancelBooking(bookingCode);
+      const guestToken = await getGuestTokenForBooking(bookingCode);
+      await cancelBooking(bookingCode, guestToken);
       setLookupMessage({
         type: 'success',
         text: `Pesanan ${bookingCode} berhasil dibatalkan.`,
@@ -211,7 +250,7 @@ export default function OrdersScreen() {
   };
 
   const handlePay = async (url: string) => {
-    const result = await openMidtransPaymentBrowser(url);
+    const result = await openMidtransPaymentBrowser(url, getMobilePaymentReturnUrl());
     if (result.status === 'error' && result.message) {
       setLookupMessage({ type: 'error', text: result.message });
     }
@@ -220,9 +259,11 @@ export default function OrdersScreen() {
       .catch(() => {});
   };
 
-  const filteredBookings = bookings.filter((item) =>
-    statusFilter === 'all' ? true : item.booking.status === statusFilter
-  );
+  const filteredBookings = bookings.filter((item) => {
+    if (statusFilter === 'all') return true;
+    const state = resolveOrderPaymentState(item.booking, item.event, item.tickets);
+    return state.code === statusFilter;
+  });
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
@@ -262,6 +303,16 @@ export default function OrdersScreen() {
             style={{ marginLeft: 8 }}
           />
         </View>
+        {!isAccountHistory && (
+          <Input
+            placeholder="Email pembeli (opsional, untuk verifikasi guest)"
+            value={lookupEmail}
+            onChangeText={setLookupEmail}
+            keyboardType="email-address"
+            autoCapitalize="none"
+            containerStyle={{ marginTop: 8, marginBottom: 0 }}
+          />
+        )}
         {lookupMessage ? (
           <Text
             style={[

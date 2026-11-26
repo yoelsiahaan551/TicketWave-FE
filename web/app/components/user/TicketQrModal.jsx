@@ -10,6 +10,7 @@ const MODAL_STATUS_LABELS = {
   expired: "Kedaluwarsa",
   valid: "Valid / Aktif",
   used: "Sudah Digunakan",
+  event_ended: "Acara Selesai",
   cancelled: "Dibatalkan",
 };
 
@@ -59,8 +60,13 @@ export default function TicketQrModal({
 
   const isPaidOrder = activeTicket.booking_status === "paid";
   const isUsed = activeTicket.status === "used" || Boolean(activeTicket.checked_in_at);
+  const isEventEnded = Boolean(activeTicket.is_event_ended) || activeTicket.status === "event_ended";
   const canShowActiveQr =
-    isPaidOrder && activeTicket.status === "valid" && !isUsed && Boolean(activeTicket.qr_token);
+    isPaidOrder &&
+    activeTicket.status === "valid" &&
+    !isUsed &&
+    !isEventEnded &&
+    Boolean(activeTicket.qr_token);
 
   return (
     <div
@@ -132,6 +138,19 @@ export default function TicketQrModal({
                   Tiket ini sudah selesai check-in di gate dan tidak lagi aktif sebagai QR masuk.
                 </p>
                 <p className="mt-3 font-mono text-xs font-bold tracking-wider text-slate-900 dark:text-white">
+                  {activeTicket.ticket_code}
+                </p>
+              </div>
+            ) : isEventEnded ? (
+              <div className="w-full rounded-xl border border-slate-200 bg-slate-50 p-5 text-center dark:border-slate-700 dark:bg-slate-800/60">
+                <Clock className="mx-auto h-8 w-8 text-slate-500 dark:text-slate-400" />
+                <p className="mt-2 text-sm font-semibold text-slate-900 dark:text-white">
+                  Acara Selesai
+                </p>
+                <p className="mt-1 text-xs text-slate-600 dark:text-slate-300">
+                  Acara telah berakhir. QR pass tidak lagi berlaku untuk check-in, tetapi riwayat tiket Anda tetap tersimpan.
+                </p>
+                <p className="mt-3 font-mono text-xs font-bold tracking-wider text-slate-800 dark:text-slate-200">
                   {activeTicket.ticket_code}
                 </p>
               </div>

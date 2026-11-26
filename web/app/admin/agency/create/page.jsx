@@ -6,6 +6,8 @@ import Link from "next/link";
 import Image from "next/image";
 import { ArrowLeft, Building2, Upload, AlertCircle, CheckCircle2 } from "lucide-react";
 import api from "@/app/lib/api";
+import { ADMIN_MEDIA_ACCEPT } from "@/app/lib/adminForms";
+import { useAdminMediaPreview } from "@/app/lib/useAdminMediaPreview";
 
 export default function CreateAgencyPage() {
   const router = useRouter();
@@ -14,8 +16,13 @@ export default function CreateAgencyPage() {
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
   const [address, setAddress] = useState("");
-  const [logoFile, setLogoFile] = useState(null);
-  const [logoPreview, setLogoPreview] = useState(null);
+  const {
+    file: logoFile,
+    previewUrl: logoPreview,
+    error: logoError,
+    clearPendingFile: clearLogoPending,
+    handleFileChange: handleLogoChange,
+  } = useAdminMediaPreview();
 
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
@@ -65,7 +72,8 @@ export default function CreateAgencyPage() {
         try {
           const formData = new FormData();
           formData.append("logo", logoFile);
-          await api.upload(`/agencies/${createdAgencyId}/logo`, formData);
+          const uploadRes = await api.upload(`/agencies/${createdAgencyId}/logo`, formData);
+          clearLogoPending(uploadRes?.data?.logo_url);
         } catch (uploadErr) {
           setWarning(`Agency berhasil dibuat, tetapi logo gagal diunggah: ${uploadErr.message || "Gagal terhubung ke layanan unggahan."} Silakan unggah ulang melalui halaman edit Agency.`);
           logoUploadFailed = true;
@@ -259,7 +267,7 @@ export default function CreateAgencyPage() {
                 Logo Agency (Opsional)
               </label>
               <div className="flex flex-col items-center justify-center gap-3">
-                <div className="flex h-28 w-28 items-center justify-center overflow-hidden rounded-xl border border-dashed border-slate-300 bg-slate-50 dark:border-slate-700 dark:bg-slate-800">
+                <div className="flex h-28 w-28 items-center justify-center overflow-hidden rounded-xl border border-dashed border-slate-300 bg-slate-50 p-1.5 dark:border-slate-700 dark:bg-slate-800">
                   {logoPreview ? (
                     <Image
                       width={112}
@@ -267,7 +275,7 @@ export default function CreateAgencyPage() {
                       unoptimized
                       src={logoPreview}
                       alt="Logo"
-                      className="h-full w-full object-cover"
+                      className="h-full w-full object-contain"
                     />
                   ) : (
                     <Building2 size={32} className="text-slate-300 dark:text-slate-600" />
@@ -280,17 +288,20 @@ export default function CreateAgencyPage() {
                   </span>
                   <input
                     type="file"
-                    accept="image/jpeg,image/png,image/webp"
+                    accept={ADMIN_MEDIA_ACCEPT}
                     className="hidden"
-                    onChange={(e) => {
-                      const file = e.target.files?.[0];
-                      if (file) {
-                        setLogoFile(file);
-                        setLogoPreview(URL.createObjectURL(file));
-                      }
-                    }}
+                    onChange={handleLogoChange}
                   />
                 </label>
+                {logoError && (
+                  <p
+                    role="alert"
+                    className="flex w-full items-start gap-1.5 rounded-lg border border-rose-200 bg-rose-50 px-2.5 py-2 text-[11px] font-medium text-rose-700 dark:border-rose-900/60 dark:bg-rose-950/40 dark:text-rose-300"
+                  >
+                    <AlertCircle size={13} className="mt-0.5 shrink-0" />
+                    <span>{logoError}</span>
+                  </p>
+                )}
                 <p className="text-center text-[11px] text-slate-400">
                   JPG, PNG, atau WEBP maks. 5MB
                 </p>

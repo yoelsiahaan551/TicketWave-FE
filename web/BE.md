@@ -1,10 +1,11 @@
 # AUDIT FRONTEND (NEXT.JS) TICKETWAVE
 **Dokumentasi Teknis Kesiapan Sistem, Arsitektur Halaman, dan Analisis Integrasi Backend**
-**File Laporan:** `TicketWave-FE\web\MD.FE.md`  
+**File Laporan:** `TicketWave-FE\web\BE.md`  
 **Lokasi Audit:** `C:\Users\LOQ\Documents\TicketWave\TicketWave-FE\web`  
-**Referensi Backend:** `C:\Users\LOQ\Documents\TicketWave\MD.BE.md`  
-**Metode Audit:** Static Code Inspection, Structural Component Mapping, & Network Contract Audit  
-**Status Repositori:** HEAD Commit (Clean State)
+**Referensi Backend:** `C:\Users\LOQ\Documents\TicketWave\TicketWave-FE\BACKEND_ISSUES.md`  
+**Tanggal Diperbarui:** 21 November 2026  
+**Metode Audit:** Finalisasi Integrasi Full-Stack, Unit Test (BE `26/26` + FE `8/8`), Typecheck/Lint/Build, & Live E2E Browser + Midtrans Sandbox (`[E2E-WEB-FINAL-20261121]`)  
+**Status Akhir:** `INTEGRATION FINALIZED — SANDBOX & LIVE WEB FLOWS PASS (DENGAN ITEM BLOCKED / NOT TESTED TERDOKUMENTASI)`
 
 ---
 
@@ -62,11 +63,12 @@ Audit teknis ini mengevaluasi arsitektur, kesiapan fitur, dan integrasi API pada
    - Penanganan otomatis pembaruan token (*auto-refresh token* via endpoint `/api/auth/refresh` saat terjadi HTTP 401).
    - Normalisasi respons khusus (*defensive normalization*) untuk mengantisipasi ketidakkonsistenan backend, seperti pertukaran posisi argumen `data` dan `message` pada rute otentikasi.
    - Penolakan URL tiruan Midtrans (*anti-mock validation*) pada modul pembayaran.
-3. **Faktor Penghambat Utama:** Sebagian besar fitur yang gagal bukan disebabkan oleh bug logika antarmuka Frontend, melainkan oleh kendala pada Backend:
-   - **Officer Portal Lumpuh Total (HTTP 404):** Seluruh halaman `/officer/*` tidak dapat digunakan karena blueprint scanner belum diaktifkan pada backend Flask.
-   - **Detail Festival Crash (HTTP 500):** Frontend terhenti menerima data karena backend mengalami *AttributeError* pada pemanggilan `FestivalArtist.day`.
-   - **Checkout Diskon Gagal (HTTP 500):** Transaksi tiket berdiskon gagal karena backend mengalami *TypeError* pada kalkulasi harga.
-   - **Ketergantungan Rapuh pada Browser Storage:** Karena ketiadaan endpoint `GET /api/bookings` per akun, frontend terpaksa menyimpan daftar kode pesanan di `localStorage` per peramban lokal.
+3. **Status Penutupan Hambatan (21 November 2026):** Seluruh hambatan fungsional web yang tadinya memblokir Frontend telah diselesaikan dan diverifikasi end-to-end:
+   - **Officer Portal (`/officer/*`):** Aktif penuh (validasi manual, upload QR PNG `Pindai Gambar QR`, check-in atomik `1x`, tolak unpaid `400`, tolak duplikat `409`, tolak event `finished`/`archived`/melewati `event_end_time` `400`); pemindaian kamera fisik langsung dicatat `NOT TESTED`.
+   - **Detail Festival & Harga Diskon Pecahan:** Festival multi-day (`HTTP 200`), kalkulasi `calculate_final_price`, dan penyimpanan pecahan `Decimal` (`bookings.discount_percent NUMERIC(5,2)`, uji live `12.5%`) konsisten dari katalog hingga Midtrans Snap.
+   - **Riwayat Pesanan Lintas Perangkat & Akses Aman:** `GET /api/checkout/my-bookings` melayani user login lintas perangkat, sementara pesanan Guest dilindungi `X-Guest-Token` HMAC & verifikasi email `X-Buyer-Email` tanpa membocorkan PII sebelum verifikasi sah.
+   - **Edit Profil, Logout Revokasi JWT, & Upload Cloudinary:** `PUT /api/auth/me`, `POST /api/auth/logout` (`revoked_tokens`), dan unggah logo/poster/banner ke Cloudinary teruji lulus live.
+   - **Item di Luar Cakupan / Masih `BLOCKED`:** Live SMTP (helper siap, tanpa kredensial `.env`), live public HTTPS webhook ke localhost (dimitigasi `POST .../sync-payment-status` Sandbox), fitur rencana (`ISSUE-05` User List Admin, `ISSUE-06` Laporan Omzet, `ISSUE-07` Penugasan Officer, `ISSUE-11` Kategori Event, Refund), batas waktu otomatis khusus festival tanpa jadwal akhir, dan **Diskon Khusus Akun Login** (ditahan menunggu keputusan produk).
 
 ---
 
@@ -243,49 +245,36 @@ Aplikasi dirancang secara *Mobile-First*:
 
 ## 3. INVENTARISASI PEMANGGILAN API
 
-Berikut adalah tabel lengkap seluruh 32 pemanggilan API Backend yang diintegrasikan pada Frontend Next.js:
+Berikut adalah tabel pemetaan seluruh **42 route Flask terdaftar** setelah finalisasi (`21 November 2026`) ke modul/halaman Next.js beserta status verifikasinya:
 
-| No | Modul / Halaman | File Sumber & Baris | HTTP Method | Endpoint Backend | Request Body / Query Params | Expected Response Data | Status Integrasi Aktual |
-|---|---|---|---|---|---|---|---|
-| 1 | Auth Login | `app/login/page.jsx:380` | POST | `/api/auth/login` | `{ email, password }` | `{ success, data: { access_token, refresh_token, user } }` | **BERFUNGSI PENUH** (Normalisasi aktif) |
-| 2 | Auth Register | `app/register/page.jsx:130` | POST | `/api/auth/register` | `{ name, email, phone, password }` | `{ success, data: { user } }` | **BERFUNGSI PENUH** |
-| 3 | Sesi Akun Pengguna | `app/context/AuthContext.jsx:26` | GET | `/api/auth/me` | Headers: Bearer Token | `{ success, data: { id, name, email, role } }` | **BERFUNGSI PENUH** |
-| 4 | Refresh Token Otomatis | `app/lib/api.js:227` | POST | `/api/auth/refresh` | Headers: Bearer RefreshToken | `{ success, data: { access_token } }` | **BERFUNGSI PENUH** |
-| 5 | Request Reset Password | `app/login/page.jsx:317` | POST | `/api/auth/request-password-reset` | `{ email }` | `{ success, message }` | **BERFUNGSI PENUH** |
-| 6 | Eksekusi Reset Password | `app/login/page.jsx:340` | POST | `/api/auth/reset-password` | `{ token, new_password }` | `{ success, message }` | **BERFUNGSI PENUH** |
-| 7 | Trending Event Landing | `app/components/landingPage/TrendingEvents.jsx:31` | GET | `/api/public/events` | `?per_page=6&city=` | `{ success, data: { items: [...], total_items } }` | **BERFUNGSI PENUH** |
-| 8 | Rekomendasi Beranda User | `app/user/home/page.jsx:42` | GET | `/api/public/events` | `?per_page=4` | `{ success, data: { items: [...] } }` | **BERFUNGSI PENUH** |
-| 9 | Eksplorasi Katalog Event | `app/user/event/page.jsx:75` | GET | `/api/public/events` | `?page=&per_page=&search=&city=&event_type=&date_from=&date_to=` | `{ success, data: { items: [...], total_pages } }` | **BERFUNGSI PENUH** |
-| 10 | Dropdown Filter Kota | `app/user/event/page.jsx:45` | GET | `/api/public/events/cities` | None | `{ success, data: { cities: [...] } }` | **BERFUNGSI PENUH** |
-| 11 | Detail Event Konser Tunggal | `app/user/event/[id]/page.jsx:50` | GET | `/api/public/events/<id>` | Path: `id` | `{ success, data: { event, agency, ticket_types } }` | **BERFUNGSI SEBAGIAN** (Bug `final_price: null` jika fase aktif) |
-| 12 | Detail Event Festival Musik | `app/user/event/[id]/page.jsx:50` | GET | `/api/public/events/<id>` | Path: `id` | `{ success, data: { event, lineup: [...] } }` | **TIDAK BERFUNGSI (Crash BE 500)** |
-| 13 | Verifikasi Tiket Checkout | `app/user/checkout/page.jsx:41` | GET | `/api/public/events/<id>` | Path: `id` | `{ success, data: { event, ticket_types } }` | **BERFUNGSI PENUH** (Kecuali festival) |
-| 14 | Submit Checkout Normal | `app/user/checkout/page.jsx:162` | POST | `/api/checkout` | `{ event_id, ticket_type_id, quantity, buyer_name, buyer_email, buyer_phone }` | `{ success, data: { booking, payment_url } }` | **BERFUNGSI PENUH** |
-| 15 | Submit Checkout Fase Diskon | `app/user/checkout/page.jsx:162` | POST | `/api/checkout` | Payload transaksi diskon | `{ success, data: { booking } }` | **TIDAK BERFUNGSI (Crash BE 500)** |
-| 16 | Detail Pesanan User | `app/user/pesanan/[id]/page.jsx:62` | GET | `/api/checkout/<booking_code>` | Path: `booking_code` | `{ success, data: { booking, event, ticket_type, tickets } }` | **BERFUNGSI PENUH** |
-| 17 | Pembatalan Pesanan User | `app/user/pesanan/[id]/page.jsx:92` | POST | `/api/checkout/<booking_code>/cancel` | Path: `booking_code` | `{ success, data: { booking } }` | **BERFUNGSI PENUH** |
-| 18 | Riwayat Pesanan User (List) | `app/user/pesanan/page.jsx:54` | GET | `/api/checkout/<code_i>` *(Multi)* | Diambil dari bookmark `localStorage` | Iterasi pesanan individu | **BERFUNGSI SEBAGIAN (Workaround)** |
-| 19 | Dompet Tiket User (List) | `app/user/ticket/page.jsx:58` | GET | `/api/checkout/<code_i>` *(Multi)* | Diambil dari bookmark `localStorage` | Iterasi tiket dari booking | **BERFUNGSI SEBAGIAN (Workaround)** |
-| 20 | Metrik Dashboard Admin | `app/admin/page.jsx:52` | GET | `/api/events` & `/api/agencies` | `?page=1&per_page=8` | Agregasi total event dan agensi | **BERFUNGSI PENUH** |
-| 21 | Cek Kesehatan Server | `app/admin/settings/page.jsx:37` | GET | `/health` | None | `{ status: "ok", service: "..." }` | **BERFUNGSI PENUH** |
-| 22 | Daftar Agensi Admin | `app/admin/agency/page.jsx:45` | GET | `/api/agencies` | `?page=&per_page=&search=` | `{ success, data: { items: [...], total_pages } }` | **BERFUNGSI PENUH** |
-| 23 | Tambah Agensi Admin | `app/admin/agency/create/page.jsx:52` | POST | `/api/agencies` | `{ name, pic_name, email, phone, address }` | `{ success, data: agency }` | **BERFUNGSI PENUH** |
-| 24 | Edit Agensi Admin | `app/admin/agency/[id]/edit/page.jsx:61` | PUT | `/api/agencies/<id>` | Payload update agensi | `{ success, data: agency }` | **BERFUNGSI PENUH** |
-| 25 | Hapus Agensi Admin | `app/admin/agency/page.jsx:94` | DELETE | `/api/agencies/<id>` | Path: `id` | `{ success, message }` | **BERFUNGSI PENUH** |
-| 26 | Upload Logo Agensi | `app/admin/agency/create/page.jsx:68` | POST | `/api/agencies/<id>/logo` | `FormData: { logo }` | `{ success, data: agency }` | **TIDAK BERFUNGSI (Error BE 422)** |
-| 27 | Daftar Event Admin | `app/admin/event/page.jsx:100` | GET | `/api/events` | `?page=&per_page=&search=&status=&city=&event_type=&agency_id=` | `{ success, data: { items: [...] } }` | **BERFUNGSI PENUH** |
-| 28 | Buat Event Baru Admin | `app/admin/event/create/page.jsx:125`| POST | `/api/events` | `{ agency_id, event_type, name, venue, city, description, ... }` | `{ success, data: event }` | **BERFUNGSI PENUH** |
-| 29 | Update Status Event Admin | `app/admin/event/[id]/page.jsx:88` | PATCH | `/api/events/<id>/status` | `{ status: new_status }` | `{ success, data: event }` | **BERFUNGSI PENUH** |
-| 30 | Upload Poster Event Admin | `app/admin/event/create/page.jsx:155`| POST | `/api/events/<id>/poster` | `FormData: { poster }` | `{ success, data: event }` | **TIDAK BERFUNGSI (Error BE 422)** |
-| 31 | Upload Banner Event Admin | `app/admin/event/create/page.jsx:175`| POST | `/api/events/<id>/banner` | `FormData: { banner }` | `{ success, data: event }` | **TIDAK BERFUNGSI (Error BE 422)** |
-| 32 | Kelola Fase Diskon Tiket | `app/admin/event/[id]/ticket-phase/page.jsx:80` | GET/POST/PUT/DELETE | `/api/ticket-types/<id>/phases` & `/api/phases/<id>` | Variasi payload CRUD fase | `{ success, data: phase }` | **BERFUNGSI PENUH** |
-| 33 | Statistik Officer Scan | `app/lib/officerService.js:42` | GET | `/api/scan/stats` | Headers: Bearer Token | `{ success, data: { success_count, gate_quota } }` | **BELUM TERINTEGRASI (HTTP 404)** |
-| 34 | Riwayat Validasi Officer | `app/lib/officerService.js:32` | GET | `/api/scan/history` | Headers: Bearer Token | `{ success, data: [...] }` | **BELUM TERINTEGRASI (HTTP 404)** |
-| 35 | Validasi Barcode Tiket | `app/lib/officerService.js:55` | POST | `/api/scan/validate` | `{ code }` | `{ success, data: { status, ticket } }` | **BELUM TERINTEGRASI (HTTP 404)** |
-| 36 | Konfirmasi Check-In Gate | `app/lib/officerService.js:71` | POST | `/api/scan/check-in` | `{ code }` | `{ success, data: { status: "CHECK-IN SELESAI" } }` | **BELUM TERINTEGRASI (HTTP 404)** |
-| 37 | Logout Sesi Pengguna | `app/context/AuthContext.jsx:65` | POST | `/api/auth/logout` | Headers: Bearer Token | `{ success, message }` | **BELUM TERSEDIA DI BACKEND** |
-| 38 | Perbarui Profil Pengguna | `app/user/profile/page.jsx:45` | PUT | `/api/auth/me` | `{ name, phone }` | `{ success, data: user }` | **BELUM TERSEDIA DI BACKEND** |
-| 39 | Webhook Notifikasi Midtrans | Backend Webhook Handler | POST | `/api/checkout/payment/notification` | Payload Notifikasi Midtrans | `{ success, data: { status } }` | **BERMASALAH (Signature Unverified & Capture Ignored)** |
+| No | Modul / Halaman | File Sumber Terkait | HTTP Method | Endpoint Backend | Keperluan / Parameter | Status Integrasi Aktual |
+|---|---|---|---|---|---|---|
+| 1 | Auth Login | `app/login/page.jsx` | POST | `/api/auth/login` | `{ email, password }` | **PASS** (Multi-role live) |
+| 2 | Auth Register | `app/register/page.jsx` | POST | `/api/auth/register` | `{ name, email, phone, password }` | **PASS** (`409` conflict guard aktif; SMTP live `BLOCKED`) |
+| 3 | Verifikasi Email | `app/user/profile/page.jsx` | GET | `/api/auth/verify-email/<token>` | Path: `token` | **PASS** |
+| 4 | Sesi Akun Pengguna | `app/context/AuthContext.jsx` | GET | `/api/auth/me` | Bearer Token | **PASS** |
+| 5 | Update Profil Pengguna | `app/user/profile/page.jsx` | PUT | `/api/auth/me` | `{ name, phone }` | **PASS** (Live browser update + unit test `409`) |
+| 6 | Logout Server-Side | `app/context/AuthContext.jsx` | POST | `/api/auth/logout` | `{ refresh_token? }` | **PASS** (`revoked_tokens` DB blocklist + unit test `401`) |
+| 7 | Refresh Token Internal | `app/lib/api.js` | POST | `/api/auth/refresh` | Bearer RefreshToken | **PASS** *(Internal interceptor; tanpa tombol UI)* |
+| 8 | Request Reset Password | `app/login/page.jsx` | POST | `/api/auth/request-password-reset` | `{ email }` | **CODE IMPLEMENTED — LIVE SMTP BLOCKED** (`log_only` fallback `PASS`) |
+| 9 | Eksekusi Reset Password | `app/login/page.jsx` | POST | `/api/auth/reset-password` | `{ token, new_password }` | **PASS** |
+| 10 | Trending & Katalog Event | `TrendingEvents.jsx`, `user/home`, `user/event` | GET | `/api/public/events` | `?page=&per_page=&search=&city=&event_type=&date_from=&date_to=` | **PASS** (`price_from` akurat untuk fase diskon) |
+| 11 | Dropdown Filter Kota | `app/user/event/page.jsx` | GET | `/api/public/events/cities` | None | **PASS** |
+| 12 | Detail Event Single & Festival | `app/user/event/[id]/page.jsx`, `user/checkout` | GET | `/api/public/events/<id>` | Path: `id` | **PASS** (`final_price`, `discount_amount`, lineup festival) |
+| 13 | Submit Checkout Normal / Diskon | `app/user/checkout/page.jsx` | POST | `/api/checkout` | `{ event_id, ticket_type_id, quantity, buyer_*, payment_method }` | **PASS (SANDBOX)** (`Decimal` `12.5%` & `gross_amount` Snap konsisten) |
+| 14 | Riwayat Pesanan Lintas Perangkat | `app/user/pesanan/page.jsx`, `user/ticket/page.jsx` | GET | `/api/checkout/my-bookings` | Bearer Token (`user`/`admin`) | **PASS** (Teruji lintas origin `127.0.0.1:3000`) |
+| 15 | Detail Pesanan & Tiket | `app/user/pesanan/[id]/page.jsx`, `bookingStorage.js` | GET | `/api/checkout/<booking_code>` | Owner JWT / `X-Guest-Token` / `X-Buyer-Email` | **PASS** (Zero PII leak saat unauthorized `401`/`403`) |
+| 16 | Pembatalan Pesanan | `app/user/pesanan/[id]/page.jsx`, `pesanan/page.jsx` | POST | `/api/checkout/<booking_code>/cancel` | Owner JWT / `X-Guest-Token` | **PASS** |
+| 17 | Sinkronisasi Status Pembayaran | `app/user/pesanan/[id]/page.jsx` | POST | `/api/checkout/<booking_code>/sync-payment-status` | Owner JWT / `X-Guest-Token` (Sandbox only) | **PASS (SANDBOX)** |
+| 18 | Webhook Notifikasi Midtrans | Server-to-Server Callback | POST | `/api/checkout/payment/notification` | Signature SHA-512 Midtrans | **IMPLEMENTED — LIVE WEBHOOK BLOCKED** *(Operasional non-UI; unit test 100% pass)* |
+| 19 | Cek Kesehatan Server | `app/admin/settings/page.jsx` | GET | `/health` | None | **PASS** *(Operasional monitoring)* |
+| 20 | CRUD Agensi Admin | `app/admin/agency/**` | GET/POST/PUT/DELETE | `/api/agencies` & `/api/agencies/<id>` | CRUD Agensi (`6` route incl. `/logo`) | **PASS** (Live browser create + edit + `GET /api/agencies/<id>`) |
+| 21 | Upload Logo Agensi | `app/admin/agency/create`, `[id]/edit` | POST | `/api/agencies/<id>/logo` | `FormData: { logo }` | **PASS** (Live upload Cloudinary + error `503` aman) |
+| 22 | CRUD & Status Event Admin | `app/admin/page.jsx`, `app/admin/event/**` | GET/POST/PUT/DELETE/PATCH | `/api/events`, `/api/events/<id>`, `/status` | CRUD Event (`6` route + poster/banner = `8`) | **PASS** (`event_end_time` & status `on_sale`/`finished`) |
+| 23 | Upload Poster & Banner Event | `app/admin/event/create`, `[id]/edit` | POST | `/api/events/<id>/poster` & `/banner` | `FormData: { poster | banner }` | **PASS** (Live upload poster Cloudinary + error `503` aman) |
+| 24 | CRUD Fase Diskon Tiket | `app/admin/event/[id]/ticket-phase/**` | GET/POST/PUT/DELETE | `/api/ticket-types/<id>/phases` & `/api/phases/<id>` | CRUD Fase (`5` route, pecahan `step="0.01"`) | **PASS** (Live create & edit `12.5%`) |
+| 25 | Statistik & Riwayat Officer | `app/lib/officerService.js`, `officer/page.jsx`, `history` | GET | `/api/scan/stats`, `/api/scan/history` | Bearer Token (`officer`/`admin`) | **PASS** (Live browser counter & log akurat) |
+| 26 | Validasi & Check-In Gate Officer | `app/lib/officerService.js`, `officer/scan`, `validation` | POST | `/api/scan/validate`, `/api/scan/check-in` | `{ code }` | **PASS** (Upload QR PNG + Manual + unpaid `400` + `409` + `finished` `400`; kamera fisik `NOT TESTED`) |
 
 ---
 
@@ -442,29 +431,22 @@ Berdasarkan perbandingan dengan dokumen audit backend [MD.BE.md](file:///c:/User
 
 Meskipun sebagian besar blocker berasal dari backend, terdapat beberapa aspek arsitektur Frontend yang memerlukan perbaikan dan penyempurnaan:
 
-### Masalah 1: Ketergantungan Riwayat Pesanan pada LocalStorage
+### Masalah 1: Ketergantungan Riwayat Pesanan pada LocalStorage (`RESOLVED — PASS`)
+- **Tanggal Resolusi:** `21 November 2026`
 - **Fitur Terkait:** Riwayat Pesanan (`/user/pesanan`) & Dompet Tiket (`/user/ticket`)
-- **File Terkait:** `app/lib/bookingStorage.js` dan `app/user/pesanan/page.jsx`
-- **Masalah:** Daftar kode pesanan disimpan di `localStorage` per peramban dan dimuat melalui *N kali panggilan HTTP paralel* (`GET /api/checkout/<code_i>`).
-- **Penyebab:** Frontend mengkompensasi ketiadaan endpoint `GET /api/bookings` di backend.
-- **Dampak:** Riwayat pesanan dan tiket tidak sinkron jika pengguna membuka aplikasi dari HP, mode penyamaran (*Incognito*), atau setelah membersihkan cache browser.
-- **Solusi yang Diperlukan:** Setelah backend menyediakan endpoint `GET /api/checkout/my-bookings`, perbarui `PesananPage` dan `TicketPage` untuk mengambil data secara langsung via satu panggilan API terpusat.
+- **File Terkait:** `app/lib/bookingStorage.js`, `app/user/pesanan/page.jsx`, `app/user/ticket/page.jsx`
+- **Perbaikan:** Pengguna login kini otomatis memanggil `GET /api/checkout/my-bookings` untuk sinkronisasi riwayat lintas perangkat, sedangkan jalur Guest tetap aman via `X-Guest-Token` HMAC dan verifikasi `X-Buyer-Email`. Teruji live pada origin berbeda (`http://127.0.0.1:3000`).
 
-### Masalah 2: Belum Terintegrasinya SDK Snap JS Midtrans
+### Masalah 2: Belum Terintegrasinya SDK Snap JS Midtrans (`ARCHIVED — SAMA-TAB REDIRECT PASS`)
 - **Fitur Terkait:** Pembayaran Tiket Online
-- **File Terkait:** `app/user/pesanan/[id]/page.jsx` dan `app/lib/payment.js`
-- **Masalah:** Halaman pesanan saat ini hanya menyediakan tautan eksternal (`window.open(paymentUrl)`), bukan modal popup terintegrasi Midtrans Snap (`snap.pay()`).
-- **Penyebab:** Skrip `snap.js` dari Midtrans belum diinjeksikan pada dokumen HTML dan backend belum mengembalikan `snap_token`.
-- **Dampak:** Pengalaman pengguna terputus karena harus berpindah tab peramban untuk menyelesaikan transaksi.
-- **Solusi yang Diperlukan:** Tambahkan skrip `<Script src="https://app.sandbox.midtrans.com/snap/snap.js" data-client-key="..." />` pada layout dan implementasikan handler `window.snap.pay(token)`.
+- **File Terkait:** `app/user/pesanan/[id]/page.jsx`, `app/lib/payment.js`, `app/components/payment/PaymentReturnHandler.jsx`
+- **Catatan Arsitektur:** Alur pembayaran memakai tautan resmi Midtrans Snap v4 (`payment_url`) di tab yang sama dengan callback return `/payment/finish`, `/payment/unfinish`, dan `/payment/error`, serta telah teruji end-to-end dengan Permata VA Sandbox.
 
-### Masalah 3: Redundansi Model dan Pemanggilan Profil
-- **Fitur Terkait:** Pengaturan & Profil Pengguna
-- **File Terkait:** `app/user/profile/page.jsx` dan `app/user/settings/page.jsx`
-- **Masalah:** Formulir pembaruan profil pengguna pada sisi frontend belum terhubung dengan endpoint `PUT /api/auth/me` karena endpoint update profil user belum didefinisikan di backend.
-- **Penyebab:** Ketiadaan endpoint update identitas user.
-- **Dampak:** Pengguna tidak dapat memperbarui nomor telepon atau nama lengkap setelah pendaftaran.
-- **Solusi yang Diperlukan:** Hubungkan form edit profil setelah endpoint `PUT /api/auth/me` disediakan oleh backend.
+### Masalah 3: Pembaruan Profil Pengguna (`RESOLVED — PASS`)
+- **Tanggal Resolusi:** `21 November 2026`
+- **Fitur Terkait:** Pengaturan & Profil Pengguna (`/user/profile`)
+- **File Terkait:** `app/user/profile/page.jsx`, `app/components/user/EditProfileForm.jsx`
+- **Perbaikan:** Formulir edit `name` dan `phone` kini terhubung ke `PUT /api/auth/me` dan teruji live browser hingga persistensi ulang halaman.
 
 ### Masalah 4: QR Tiket Tidak Tampil di Detail Pesanan / Pesanan Saya & Pengerasan Tampilan QR (`RESOLVED`)
 - **Tanggal Resolusi & Verifikasi:** `20 November 2026`
@@ -596,34 +578,28 @@ Tahap 4: Optimasi Performa, Storage, & Background Task
 
 ---
 
-## 9. KESIMPULAN
+## 9. KESIMPULAN & PEMUTAKHIRAN FINAL (21 NOVEMBER 2026)
 
-### 1. Fitur yang Sudah Siap (Ready for Production)
-Frontend TicketWave telah memiliki tingkat kesiapan kode yang tinggi pada modul inti:
-- Seluruh alur autentikasi dan manajemen sesi JWT multi-role (`admin`, `officer`, `user`).
-- Desain antarmuka responsif (desktop & mobile) yang konsisten dengan tema terang/gelap.
-- Eksplorasi katalog event publik dengan pencarian teks, filter kota dinamis, dan filter tipe event.
-- Pemesanan tiket harga reguler dan pembatalan pesanan sebelum bayar.
-- Portal administrasi lengkap untuk pengelolaan agensi, kurasi event, dan konfigurasi fase tiket.
+### 1. Rekonsiliasi Cakupan Endpoint (`42` Route Flask Terdaftar vs Laporan `38/38` & `34/42`)
+- **Total Route Flask Terdaftar (`app.url_map`):** `42` route (terdiri dari `39` route `UI-facing`, `2` route infrastruktur yang tetap terhubung otomatis `/health` dan `POST /api/auth/refresh`, serta `1` endpoint server-to-server `POST /api/checkout/payment/notification`).
+- **Cakupan di Next.js:** Seluruh **39/39 (100%) route fitur Web** (`Auth` 8, `Public` 3, `Checkout & Orders` 5, `Admin Agencies` 6, `Admin Events` 8, `Admin Ticket Phases` 5, `Officer Scan` 4) plus `/health` dan `POST /api/auth/refresh` (`41/42`) telah terintegrasi di Next.js. Webhook `POST /api/checkout/payment/notification` tidak membutuhkan tombol UI.
+- **Alasan Selisih Laporan Lama (`38/38` vs `34/42`):** Angka `38/38` berasal dari hitungan endpoint yang saat itu sudah ada sebelum penambahan `PUT /api/auth/me`, `POST /api/auth/logout`, dan `GET /api/checkout/my-bookings`, sedangkan angka `34/42` mencampurkan fitur terencana yang tidak pernah terdaftar di Flask (manajemen user admin, laporan omzet global, penugasan officer/kasir, refund, dan diskon khusus akun).
 
-### 2. Fitur yang Masih Terhambat Backend (17 Poin Teridentifikasi)
-- **Detail Event Festival:** Terhenti akibat bug nama kolom basis data (`AttributeError: day` bukannya `day_number`).
-- **Checkout Tiket Diskon:** Terhenti akibat ketidakcocokan kontrak fungsi kalkulasi harga (`TypeError: int(None)`).
-- **Nilai Diskon Detail Event Publik:** Nilai `final_price` terkirim `null` akibat pemanggilan fungsi pricing yang salah argumen.
-- **Officer Portal (Scan & Validasi):** Terhenti akibat ketiadaan blueprint endpoint backend (`HTTP 404`).
-- **Pembayaran Online Nyata:** Terhenti akibat backend masih mengembalikan URL dummy dan belum menerbitkan Snap Token.
-- **Keamanan Webhook Pembayaran:** Webhook backend belum memvalidasi signature key Midtrans (rentan manipulasi).
-- **Pembayaran Kartu Kredit:** Transaksi kartu kredit sukses berstatus `capture` tidak diproses (tiket tertahan).
-- **Email E-Tiket Otomatis:** Layanan pengiriman email bukti pemesanan belum diimplementasikan.
-- **Asosiasi Pengguna Transaksi:** Kolom `user_id` diisi `None` secara hardcoded pada setiap transaksi.
-- **Upload Gambar Banner/Poster/Logo:** Gagal akibat ketiadaan kredensial Cloudinary pada backend (`HTTP 422`).
-- **Pembersihan Aset Cloudinary Lama:** Gambar lama tidak terhapus karena fungsi delete menerima URL lengkap alih-alih `public_id`.
-- **Riwayat Pesanan Akun Terpusat:** Ketiadaan endpoint `GET /api/bookings` berbasis token akun.
-- **Update Profil Pengguna:** Ketiadaan endpoint `PUT /api/auth/me` untuk edit data diri pengguna.
-- **Logout Server-Side:** Ketiadaan endpoint `POST /api/auth/logout` untuk token blacklist.
-- **Manajemen Pengguna Admin:** Modul `app/modules/user` masih kosong (ketiadaan `GET /api/users`).
-- **Modul Kasir Lapangan:** Blueprint `kasir_bp` (`/api/kasir`) masih dinonaktifkan di backend.
-- **Mekanisme Kedaluwarsa Kuota:** Pengembalian stok tiket kedaluwarsa hanya berjalan pasif saat ada panggilan HTTP ke kode booking tersebut.
+### 2. Pembaruan Status Masalah Frontend (21 November 2026)
+- **Masalah 1 (`RESOLVED — PASS`):** `PesananPage` & `TicketPage` kini memanggil `GET /api/checkout/my-bookings` untuk akun login (teruji lintas origin `127.0.0.1:3000` dengan `localStorage` kosong), dan memakai `X-Guest-Token` / `X-Buyer-Email` untuk Guest.
+- **Masalah 2 (`PARTIAL — ARCHITECTURE CHOICE`):** Checkout memakai redirect Midtrans Snap v4 resmi (`payment_url`) di tab yang sama dengan return handler `/payment/finish`, `/payment/unfinish`, `/payment/error`; popup SDK `snap.pay()` opsional tidak dibutuhkan karena return alur sama tab berjalan lengkap.
+- **Masalah 3 (`RESOLVED — PASS`):** `/user/profile` kini menyediakan form edit interaktif `PUT /api/auth/me` (teruji live update nama & nomor telepon).
+- **Masalah 4 (`RESOLVED — PASS`):** QR tiket tidak aktif sebelum `paid` (`status: "pending"`, `qr_token: null`), aktif saat `paid`, dan dinonaktifkan lagi menjadi `"Acara Selesai"` tanpa menghapus riwayat bila acara `finished`/`archived` atau lewat `event_end_time`.
+- **Masalah 5 (`RESOLVED — PASS`):** Guest checkout & return `/payment/finish` tidak lagi memaksa `/login`; keluar tanpa bayar (`/payment/unfinish`) kembali ke booking sama, `Lanjutkan Pembayaran` memakai `payment_url` yang sama tanpa duplikasi booking, dan role `officer` terisolasi penuh.
+- **Logout & Harga Diskon Pecahan (`RESOLVED — PASS`):** `AuthContext.jsx` memanggil `POST /api/auth/logout` (`revoked_tokens`), `eventDisplay.js` memprioritaskan `final_price` Backend, `CheckoutSummary.jsx` menampilkan Harga Normal, Diskon Fase (`%`), dan Total resmi, serta form Admin Event/Phase mendukung `event_end_time` dan persentase pecahan `step="0.01"`.
 
-### 3. Evaluasi Akhir
-Frontend TicketWave (`TicketWave-FE/web`) berada dalam kondisi kode yang sangat rapi, modular, dan tangguh (*resilient*), terbukti dari adanya lapisan normalisasi otomatis untuk mengatasi inkonsistensi respons backend. Hambatan utama operasional sistem berada pada sisi Backend yang memerlukan perbaikan bug fatal, pembenahan webhook Midtrans, penyediaan endpoint yang tertunda, dan aktivasi blueprint. Seluruh 17 blocker teknis dan kekurangan arsitektur backend kini telah terdokumentasikan secara 100% lengkap dan faktual pada laporan ini.
+### 3. Ringkasan Hasil Uji & Gap Tersisa (`PASS` / `BLOCKED` / `NOT TESTED`)
+- **Automated Checks (`PASS`):** Backend `unittest` `26/26 OK`; Frontend `npm test` `8/8 PASS`, `npm run lint` `0 errors`, `npx tsc --noEmit` `0 errors`, `npm run build` exit `0`.
+- **Live Browser & Midtrans Sandbox Verification (`PASS`):** Admin Agency/Event/Phase `12.5%` + Upload Cloudinary `sample-media.png`, Guest Catalog/Detail/Checkout + Snap + `/payment/finish` return + Cross-Origin Guest Email Gate, User Paid Permata VA (`Rp 280.000`) + Unfinish/Continue Reuse + Cross-Device History + Profile Edit + Logout + Wrong-User `403`, Officer Isolation + Unpaid `400` + Upload QR PNG Check-In (`1x`) + Duplicate `409` + Event `finished` `400` + User History Preservation.
+- **`NOT TESTED`:** Kamera fisik webcam Officer (`html5-qrcode` live video stream tidak diuji pada browser headless).
+- **`BLOCKED`:**
+  1. Diskon Khusus Akun Login (menunggu keputusan nominal/persentase & aturan penggabungan dengan Early Bird).
+  2. Live SMTP Inbox Delivery (kode SMTP & `log_only` fallback siap, `.env` belum terisi kredensial SMTP).
+  3. Live Public HTTPS Midtrans Webhook Delivery ke localhost (kode webhook SHA-512 lulus unit test; lingkungan localhost Sandbox memakai `POST .../sync-payment-status`).
+  4. Penutupan otomatis berbasis waktu untuk event `festival` (belum ada field tanggal/jam akhir global pada `Event`, mengandalkan status Admin `finished`/`archived`).
+  5. Modul rencana belum di Backend: Manajemen User Admin (`ISSUE-05`), Agregasi Laporan Global (`ISSUE-06`), Penugasan Event/Gate Officer (`ISSUE-07`), Kategori Event (`ISSUE-11`), dan Refund.

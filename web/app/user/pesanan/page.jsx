@@ -15,92 +15,122 @@ import {
   Clock,
 } from "lucide-react";
 import api from "@/app/lib/api";
+import { useAuth } from "@/app/context/AuthContext";
 import TicketQrModal from "@/app/components/user/TicketQrModal";
-import { getTicketDisplayStatus } from "@/app/lib/payment";
+import {
+  formatWibTime,
+  getTicketDisplayStatus,
+  resolveOrderPaymentState,
+} from "@/app/lib/payment";
 import {
   fetchAllSavedBookings,
+  fetchMyBookings,
+  getGuestTokenForBooking,
   saveBookingEntry,
 } from "@/app/lib/bookingStorage";
 
-const statusStyles = {
-  paid: "border border-emerald-200/60 bg-emerald-50 text-emerald-700 dark:border-emerald-900/50 dark:bg-emerald-950/40 dark:text-emerald-300",
-  pending_payment: "border border-amber-200/60 bg-amber-50 text-amber-700 dark:border-amber-900/50 dark:bg-amber-950/40 dark:text-amber-300",
-  cancelled: "border border-slate-200 bg-slate-100 text-slate-700 dark:border-slate-800 dark:bg-slate-800 dark:text-slate-300",
-  expired: "border border-slate-200 bg-slate-100 text-slate-700 dark:border-slate-800 dark:bg-slate-800 dark:text-slate-300",
-  failed: "border border-rose-200/60 bg-rose-50 text-rose-700 dark:border-rose-900/50 dark:bg-rose-950/40 dark:text-rose-300",
-};
-
-const statusLabels = {
-  paid: "Dibayar",
-  pending_payment: "Menunggu Pembayaran",
-  cancelled: "Dibatalkan",
-  expired: "Kadaluarsa",
-  failed: "Gagal",
-};
-
 export default function PesananPage() {
+  const { user, isAuthenticated, loading: authLoading } = useAuth();
+  const isAccountHistory = Boolean(isAuthenticated && user && user.role !== "officer");
+
   const [bookings, setBookings] = useState([]);
   const [loadError, setLoadError] = useState(null);
   const [loading, setLoading] = useState(true);
   const [activeFilter, setActiveFilter] = useState("all");
 
   const [lookupCode, setLookupCode] = useState("");
+  const [lookupEmail, setLookupEmail] = useState("");
   const [lookupLoading, setLookupLoading] = useState(false);
   const [lookupMessage, setLookupMessage] = useState(null);
   const [cancellingCode, setCancellingCode] = useState(null);
   const [qrModalData, setQrModalData] = useState(null);
+  const [nowMs, setNowMs] = useState(null);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setNowMs(Date.now());
+    }, 30000);
+    return () => clearInterval(interval);
+  }, []);
 
   const loadBookings = useCallback(async () => {
+    if (authLoading) return;
     await Promise.resolve();
     setLoading(true);
     setLoadError(null);
     try {
-      const results = await fetchAllSavedBookings();
+      const results = isAccountHistory
+        ? await fetchMyBookings()
+        : await fetchAllSavedBookings();
       setBookings(results.bookings);
-      setLoadError(results.errors.length ? `${results.errors.length} dari ${results.total} kode gagal dimuat. Daftar dan jumlah hanya mencakup hasil yang berhasil dimuat. ${results.errors.map((error) => `${error.booking_code}: ${error.message}${error.status ? ` (HTTP ${error.status})` : ""}`).join("; ")} Gunakan Segarkan Status untuk mencoba lagi.` : null);
+      setLoadError(
+        results.errors.length
+          ? `${results.errors.length} dari ${results.total} kode gagal dimuat. Daftar dan jumlah hanya mencakup hasil yang berhasil dimuat. ${results.errors
+              .map(
+                (error) =>
+                  `${error.booking_code}: ${error.message}${
+                    error.status ? ` (HTTP ${error.status})` : ""
+                  }`
+              )
+              .join("; ")} Gunakan Segarkan Status untuk mencoba lagi.`
+          : null
+      );
     } catch (err) {
       setBookings([]);
       setLoadError(err.message || "Gagal memuat pesanan dari server.");
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [authLoading, isAccountHistory]);
 
   useEffect(() => {
+    if (authLoading) return undefined;
     const t = setTimeout(() => {
       loadBookings();
     }, 0);
     return () => clearTimeout(t);
-  }, [loadBookings]);
+  }, [authLoading, loadBookings]);
 
   const handleLookupSubmit = async (e) => {
     e.preventDefault();
     const code = lookupCode.trim().toUpperCase();
+    const buyerEmail = lookupEmail.trim();
     if (!code) return;
 
     setLookupLoading(true);
     setLookupMessage(null);
     try {
-      const res = await api.get(`/checkout/${encodeURIComponent(code)}`);
-      if (!res.success || !res.data?.booking) throw new Error(res.message || "Respons pesanan tidak valid.");
+      const savedToken = getGuestTokenForBooking(code);
+      const headers = {};
+      if (savedToken) headers["X-Guest-Token"] = savedToken;
+      if (buyerEmail) headers["X-Buyer-Email"] = buyerEmail;
+      const res = await api.get(
+        `/checkout/${encodeURIComponent(code)}`,
+        {},
+        Object.keys(headers).length ? { headers } : {}
+      );
+      if (!res.success || !res.data?.booking) {
+        throw new Error(res.message || "Respons pesanan tidak valid.");
+      }
       if (res.data?.booking) {
         saveBookingEntry({
           booking_code: res.data.booking.booking_code,
-          payment_url: res.data.booking.payment_url || null,
-          recipient_email: res.data.booking.recipient_email || res.data.booking.buyer_email,
-          event_name: res.data.event?.name,
+          guest_token: res.data.guest_access_token || savedToken || null,
         });
         setLookupCode("");
+        setLookupEmail("");
         setLookupMessage({
           type: "success",
-          text: `Pesanan ${res.data.booking.booking_code} berhasil ditemukan dan ditambahkan ke daftar Anda.`,
+          text: `Pesanan ${res.data.booking.booking_code} berhasil ditemukan dan dibuka.`,
         });
         await loadBookings();
       }
     } catch (err) {
       setLookupMessage({
         type: "error",
-        text: err.message || `Kode booking "${code}" tidak ditemukan di server.`,
+        text:
+          err.message ||
+          `Kode booking "${code}" tidak ditemukan atau membutuhkan verifikasi email/login.`,
       });
     } finally {
       setLookupLoading(false);
@@ -116,8 +146,15 @@ export default function PesananPage() {
     setCancellingCode(bookingCode);
     setLookupMessage(null);
     try {
-      const res = await api.post(`/checkout/${encodeURIComponent(bookingCode)}/cancel`);
-      if (res?.success !== true || res.data?.booking?.status !== "cancelled") throw new Error("Pembatalan belum dikonfirmasi server.");
+      const guestToken = getGuestTokenForBooking(bookingCode);
+      const res = await api.post(
+        `/checkout/${encodeURIComponent(bookingCode)}/cancel`,
+        {},
+        guestToken ? { headers: { "X-Guest-Token": guestToken } } : {}
+      );
+      if (res?.success !== true || res.data?.booking?.status !== "cancelled") {
+        throw new Error("Pembatalan belum dikonfirmasi server.");
+      }
       setLookupMessage({
         type: "success",
         text: `Pesanan ${bookingCode} berhasil dibatalkan.`,
@@ -128,6 +165,7 @@ export default function PesananPage() {
         type: "error",
         text: err.message || `Gagal membatalkan pesanan ${bookingCode}.`,
       });
+      await loadBookings();
     } finally {
       setCancellingCode(null);
     }
@@ -140,10 +178,56 @@ export default function PesananPage() {
       minimumFractionDigits: 0,
     }).format(n || 0);
 
-  const filteredBookings = bookings.filter((item) => {
+  const effectiveNowMs = nowMs ?? undefined;
+  const enrichedBookings = bookings.map((item) => ({
+    ...item,
+    orderState: resolveOrderPaymentState(
+      item.booking,
+      item.event,
+      item.tickets,
+      effectiveNowMs
+    ),
+  }));
+
+  const filteredBookings = enrichedBookings.filter((item) => {
     if (activeFilter === "all") return true;
-    return item.booking?.status === activeFilter;
+    return item.orderState.code === activeFilter;
   });
+
+  const filterTabs = [
+    { id: "all", label: `Semua (${enrichedBookings.length})` },
+    {
+      id: "pending_payment",
+      label: `Menunggu Pembayaran (${
+        enrichedBookings.filter((item) => item.orderState.code === "pending_payment")
+          .length
+      })`,
+    },
+    {
+      id: "paid",
+      label: `Dibayar (${
+        enrichedBookings.filter((item) => item.orderState.code === "paid").length
+      })`,
+    },
+    {
+      id: "expired",
+      label: `Pembayaran Kedaluwarsa (${
+        enrichedBookings.filter((item) => item.orderState.code === "expired").length
+      })`,
+    },
+    {
+      id: "event_ended",
+      label: `Acara Selesai (${
+        enrichedBookings.filter((item) => item.orderState.code === "event_ended").length
+      })`,
+    },
+    {
+      id: "cancelled",
+      label: `Pesanan Dibatalkan (${
+        enrichedBookings.filter((item) => item.orderState.code === "cancelled").length
+      })`,
+    },
+  ];
 
   return (
     <div className="min-h-screen bg-slate-50 transition-colors dark:bg-slate-950">
@@ -155,7 +239,7 @@ export default function PesananPage() {
               Manajemen Transaksi
             </span>
             <h1 className="mt-1 text-2xl font-bold tracking-tight text-slate-900 dark:text-white sm:text-3xl">
-              Pesanan Tersimpan di Perangkat
+              {isAccountHistory ? "Riwayat Pesanan Akun" : "Pesanan Tersimpan di Perangkat"}
             </h1>
             <p className="mt-1.5 text-xs text-slate-500 dark:text-slate-400 sm:text-sm">
               Lacak status pembayaran, batas waktu reservasi, dan e-ticket dari kode booking Anda secara real-time.
@@ -181,13 +265,13 @@ export default function PesananPage() {
                 Lacak atau Tambahkan Kode Booking
               </h2>
               <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
-                Masukkan kode booking resmi (contoh: <code className="font-mono font-medium">TKTW-20260405-ABC123</code>) untuk memuat transaksi.
+                Masukkan kode booking resmi (contoh: <code className="font-mono font-medium">TKTW-20260405-ABC123</code>). Untuk pesanan Guest lintas perangkat, sertakan email pembeli.
               </p>
             </div>
 
             <form
               onSubmit={handleLookupSubmit}
-              className="flex w-full max-w-md flex-col sm:flex-row items-stretch sm:items-center gap-2"
+              className="flex w-full max-w-xl flex-col sm:flex-row items-stretch sm:items-center gap-2"
             >
               <div className="relative flex-1">
                 <Search
@@ -202,6 +286,13 @@ export default function PesananPage() {
                   className="w-full rounded-xl border border-slate-200 bg-white py-2 pl-9 pr-3 font-mono text-xs uppercase text-slate-900 outline-none transition focus:border-[#0080f2] focus:ring-1 focus:ring-[#0080f2] dark:border-slate-700 dark:bg-slate-800 dark:text-white dark:focus:border-[#0080f2]"
                 />
               </div>
+              <input
+                type="email"
+                value={lookupEmail}
+                onChange={(e) => setLookupEmail(e.target.value)}
+                placeholder="Email pembeli (opsional / Guest)"
+                className="sm:w-52 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-900 outline-none transition focus:border-[#0080f2] focus:ring-1 focus:ring-[#0080f2] dark:border-slate-700 dark:bg-slate-800 dark:text-white dark:focus:border-[#0080f2]"
+              />
               <button
                 type="submit"
                 disabled={lookupLoading}
@@ -213,9 +304,7 @@ export default function PesananPage() {
           </div>
 
           {lookupMessage && (
-            <div
-              className="mt-3 rounded-xl border border-slate-300 bg-slate-100 px-3.5 py-2.5 text-xs font-medium text-slate-800 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
-            >
+            <div className="mt-3 rounded-xl border border-slate-300 bg-slate-100 px-3.5 py-2.5 text-xs font-medium text-slate-800 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200">
               {lookupMessage.text}
             </div>
           )}
@@ -223,41 +312,25 @@ export default function PesananPage() {
           <div className="mt-3.5 flex items-start gap-2 rounded-xl bg-slate-50 px-3.5 py-2.5 text-xs text-slate-500 dark:bg-slate-800/60 dark:text-slate-400">
             <Info size={14} className="mt-0.5 shrink-0 text-slate-400" />
             <span>
-              Daftar ini hanya memuat bookmark kode booking di perangkat ini, bukan seluruh riwayat akun. Rincian dan status dibaca dari server. Pesanan akun memerlukan login pemiliknya; kode booking tamu harus dijaga kerahasiaannya.
+              {isAccountHistory
+                ? "Riwayat pesanan akun Anda disinkronkan langsung dari server (lintas perangkat) dan dapat dibuka kapan saja setelah login."
+                : "Mode Guest menampilkan pesanan tersimpan di browser ini. Untuk membuka pesanan Guest di perangkat lain, masukkan kode booking beserta email pembelinya."}
             </span>
           </div>
         </div>
 
-        {loadError && <p role="alert" className="mt-4 rounded-xl border border-red-200 p-4 text-sm text-red-700 dark:text-red-300">{loadError}</p>}
+        {loadError && (
+          <p
+            role="alert"
+            className="mt-4 rounded-xl border border-red-200 p-4 text-sm text-red-700 dark:text-red-300"
+          >
+            {loadError}
+          </p>
+        )}
+
         {/* Filter Tabs */}
         <div className="mt-6 flex gap-2 overflow-x-auto pb-1">
-          {[
-            { id: "all", label: `Semua (${bookings.length})` },
-            {
-              id: "pending_payment",
-              label: `Menunggu Pembayaran (${
-                bookings.filter((b) => b.booking?.status === "pending_payment").length
-              })`,
-            },
-            {
-              id: "paid",
-              label: `Dibayar (${
-                bookings.filter((b) => b.booking?.status === "paid").length
-              })`,
-            },
-            {
-              id: "cancelled",
-              label: `Dibatalkan (${
-                bookings.filter((b) => b.booking?.status === "cancelled").length
-              })`,
-            },
-            {
-              id: "expired",
-              label: `Kadaluarsa (${
-                bookings.filter((b) => b.booking?.status === "expired").length
-              })`,
-            },
-          ].map((tab) => (
+          {filterTabs.map((tab) => (
             <button
               key={tab.id}
               type="button"
@@ -288,10 +361,10 @@ export default function PesananPage() {
         {/* Bookings List */}
         {!loading && filteredBookings.length > 0 && (
           <div className="mt-6 space-y-3.5">
-            {filteredBookings.map(({ booking, event, ticket_type, tickets }) => {
+            {filteredBookings.map(({ booking, event, ticket_type, tickets, orderState }) => {
               const modalTickets = (tickets || []).map((t) => ({
                 ...t,
-                status: getTicketDisplayStatus(booking, t),
+                status: getTicketDisplayStatus(booking, t, event, effectiveNowMs),
                 booking_code: booking.booking_code,
                 booking_status: booking.status,
                 buyer_name: booking.buyer_name,
@@ -302,136 +375,157 @@ export default function PesananPage() {
                 (t) => t.status === "valid" && Boolean(t.qr_token)
               );
               const usedTicket = modalTickets.find((t) => t.status === "used");
+              const endedTicket = modalTickets.find((t) => t.status === "event_ended");
 
               return (
-              <div
-                key={booking.booking_code}
-                className="rounded-xl border border-slate-200/80 bg-white p-5 shadow-xs transition hover:border-slate-300 dark:border-slate-800 dark:bg-slate-900"
-              >
-                <div className="flex flex-col justify-between gap-4 lg:flex-row lg:items-center">
-                  {/* Left Section */}
-                  <div className="flex-1">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="rounded-md bg-slate-100 px-2 py-0.5 font-mono text-[11px] font-semibold text-slate-800 dark:bg-slate-800 dark:text-slate-200">
-                        {booking.booking_code}
-                      </span>
-                      <span
-                        className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${
-                          statusStyles[booking.status] || statusStyles.expired
-                        }`}
-                      >
-                        {statusLabels[booking.status] || booking.status}
-                      </span>
-                      {ticket_type?.name && (
-                        <span className="inline-flex items-center gap-1 text-xs font-medium text-slate-600 dark:text-slate-400">
-                          <Ticket size={12} />
-                          {ticket_type.name} ({booking.quantity}x)
+                <div
+                  key={booking.booking_code}
+                  className="rounded-xl border border-slate-200/80 bg-white p-5 shadow-xs transition hover:border-slate-300 dark:border-slate-800 dark:bg-slate-900"
+                >
+                  <div className="flex flex-col justify-between gap-4 lg:flex-row lg:items-center">
+                    {/* Left Section */}
+                    <div className="flex-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="rounded-md bg-slate-100 px-2 py-0.5 font-mono text-[11px] font-semibold text-slate-800 dark:bg-slate-800 dark:text-slate-200">
+                          {booking.booking_code}
                         </span>
-                      )}
-                    </div>
+                        <span
+                          className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${orderState.badgeClass}`}
+                        >
+                          {orderState.label}
+                        </span>
+                        {ticket_type?.name && (
+                          <span className="inline-flex items-center gap-1 text-xs font-medium text-slate-600 dark:text-slate-400">
+                            <Ticket size={12} />
+                            {ticket_type.name} ({booking.quantity}x)
+                          </span>
+                        )}
+                      </div>
 
-                    <h3 className="mt-2 text-base font-semibold text-slate-900 dark:text-white">
-                      {event?.name || "Event TicketWave"}
-                    </h3>
+                      <h3 className="mt-2 text-base font-semibold text-slate-900 dark:text-white">
+                        {event?.name || "Event TicketWave"}
+                      </h3>
 
-                    <div className="mt-2 flex flex-wrap gap-3 text-xs text-slate-500 dark:text-slate-400">
-                      {event?.event_date && (
-                        <span className="flex items-center gap-1.5">
-                          <Calendar size={13} className="text-slate-400" />
-                          {new Date(event.event_date).toLocaleDateString("id-ID", {
+                      <div className="mt-2 flex flex-wrap gap-3 text-xs text-slate-500 dark:text-slate-400">
+                        {event?.event_date && (
+                          <span className="flex items-center gap-1.5">
+                            <Calendar size={13} className="text-slate-400" />
+                            {new Date(event.event_date).toLocaleDateString("id-ID", {
                               day: "numeric",
                               month: "long",
                               year: "numeric",
                             })}
-                        </span>
-                      )}
-                      {event?.venue && (
-                        <span className="flex items-center gap-1.5">
-                          <MapPin size={13} className="text-slate-400" />
-                          {event.venue}, {event.city}
-                        </span>
-                      )}
-                      {booking.status === "pending_payment" && booking.expired_at && (
-                        <span className="flex items-center gap-1 font-medium text-slate-600 dark:text-slate-400">
-                          <Clock size={13} />
-                          Batas bayar:{" "}
-                          {new Date(booking.expired_at).toLocaleTimeString("id-ID", {
-                            hour: "2-digit",
-                            minute: "2-digit",
-                          })}{" "}
-                          WIB
-                        </span>
-                      )}
-                    </div>
-                  </div>
+                          </span>
+                        )}
+                        {event?.venue && (
+                          <span className="flex items-center gap-1.5">
+                            <MapPin size={13} className="text-slate-400" />
+                            {event.venue}, {event.city}
+                          </span>
+                        )}
+                        {orderState.showDeadline && booking.expired_at && (
+                          <span className="flex items-center gap-1 font-medium text-slate-600 dark:text-slate-400">
+                            <Clock size={13} />
+                            Batas bayar: {formatWibTime(booking.expired_at)} WIB
+                          </span>
+                        )}
+                      </div>
 
-                  {/* Right Section */}
-                  <div className="flex flex-col items-start justify-between gap-3 border-t border-slate-100 pt-3 sm:flex-row sm:items-center lg:flex-col lg:items-end lg:border-t-0 lg:pt-0 dark:border-slate-800">
-                    <div className="lg:text-right">
-                      <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                        Total ({booking.quantity} Tiket)
-                      </p>
-                      <p className="text-base font-bold text-[#0080f2]">
-                        {formatRupiah(booking.total_price)}
-                      </p>
+                      {orderState.description &&
+                        ["expired", "event_ended", "sales_closed"].includes(
+                          orderState.code
+                        ) && (
+                          <p className="mt-2 text-xs text-slate-600 dark:text-slate-400">
+                            {orderState.description}
+                          </p>
+                        )}
                     </div>
 
-                    <div className="flex flex-wrap items-center gap-2">
-                      {booking.status === "pending_payment" && (
-                        <button
-                          type="button"
-                          onClick={() => handleCancelOrder(booking.booking_code)}
-                          disabled={cancellingCode === booking.booking_code}
-                          className="rounded-xl border border-slate-300 bg-slate-100 px-3 py-1.5 text-xs font-medium text-slate-700 transition hover:bg-slate-200 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700"
-                        >
-                          {cancellingCode === booking.booking_code
-                            ? "Membatalkan..."
-                            : "Batalkan"}
-                        </button>
-                      )}
+                    {/* Right Section */}
+                    <div className="flex flex-col items-start justify-between gap-3 border-t border-slate-100 pt-3 sm:flex-row sm:items-center lg:flex-col lg:items-end lg:border-t-0 lg:pt-0 dark:border-slate-800">
+                      <div className="lg:text-right">
+                        <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                          Total ({booking.quantity} Tiket)
+                        </p>
+                        <p className="text-base font-bold text-[#0080f2]">
+                          {formatRupiah(booking.total_price)}
+                        </p>
+                      </div>
 
-                      {booking.status === "paid" && validTicket && (
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setQrModalData({
-                              tickets: modalTickets,
-                              initialTicketCode: validTicket.ticket_code,
-                            })
-                          }
-                          className="inline-flex items-center gap-1.5 rounded-xl border border-[#0080f2] bg-blue-50/60 px-3.5 py-1.5 text-xs font-medium text-[#0080f2] transition hover:bg-blue-100/70 dark:border-blue-500/60 dark:bg-blue-950/30 dark:text-blue-300 dark:hover:bg-blue-950/50"
-                        >
-                          <QrCode size={13} />
-                          Tampilkan QR
-                        </button>
-                      )}
+                      <div className="flex flex-wrap items-center gap-2">
+                        {orderState.canCancel && (
+                          <button
+                            type="button"
+                            onClick={() => handleCancelOrder(booking.booking_code)}
+                            disabled={cancellingCode === booking.booking_code}
+                            className="rounded-xl border border-slate-300 bg-slate-100 px-3 py-1.5 text-xs font-medium text-slate-700 transition hover:bg-slate-200 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700"
+                          >
+                            {cancellingCode === booking.booking_code
+                              ? "Membatalkan..."
+                              : "Batalkan"}
+                          </button>
+                        )}
 
-                      {booking.status === "paid" && !validTicket && usedTicket && (
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setQrModalData({
-                              tickets: modalTickets,
-                              initialTicketCode: usedTicket.ticket_code,
-                            })
-                          }
-                          className="inline-flex items-center gap-1.5 rounded-xl border border-amber-300 bg-amber-50/70 px-3 py-1.5 text-xs font-medium text-amber-800 transition hover:bg-amber-100/70 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-300"
-                        >
-                          Status: Sudah Digunakan
-                        </button>
-                      )}
+                        {orderState.code === "paid" && validTicket && (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setQrModalData({
+                                tickets: modalTickets,
+                                initialTicketCode: validTicket.ticket_code,
+                              })
+                            }
+                            className="inline-flex items-center gap-1.5 rounded-xl border border-[#0080f2] bg-blue-50/60 px-3.5 py-1.5 text-xs font-medium text-[#0080f2] transition hover:bg-blue-100/70 dark:border-blue-500/60 dark:bg-blue-950/30 dark:text-blue-300 dark:hover:bg-blue-950/50"
+                          >
+                            <QrCode size={13} />
+                            Tampilkan QR
+                          </button>
+                        )}
 
-                      <Link
-                        href={`/user/pesanan/${booking.booking_code}`}
-                        className="inline-flex items-center gap-1.5 rounded-xl bg-[#0080f2] hover:bg-[#0070d4] px-3.5 py-1.5 text-xs font-medium text-white shadow-xs transition"
-                      >
-                        Lihat Detail
-                        <ArrowRight size={13} />
-                      </Link>
+                        {orderState.code === "paid" && !validTicket && usedTicket && (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setQrModalData({
+                                tickets: modalTickets,
+                                initialTicketCode: usedTicket.ticket_code,
+                              })
+                            }
+                            className="inline-flex items-center gap-1.5 rounded-xl border border-amber-300 bg-amber-50/70 px-3 py-1.5 text-xs font-medium text-amber-800 transition hover:bg-amber-100/70 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-300"
+                          >
+                            Status Tiket: Sudah Digunakan
+                          </button>
+                        )}
+
+                        {orderState.code === "paid" &&
+                          !validTicket &&
+                          !usedTicket &&
+                          endedTicket && (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setQrModalData({
+                                  tickets: modalTickets,
+                                  initialTicketCode: endedTicket.ticket_code,
+                                })
+                              }
+                              className="inline-flex items-center gap-1.5 rounded-xl border border-slate-300 bg-slate-100 px-3 py-1.5 text-xs font-medium text-slate-700 transition hover:bg-slate-200 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
+                            >
+                              Status Tiket: Acara Selesai
+                            </button>
+                          )}
+
+                        <Link
+                          href={`/user/pesanan/${booking.booking_code}`}
+                          className="inline-flex items-center gap-1.5 rounded-xl bg-[#0080f2] hover:bg-[#0070d4] px-3.5 py-1.5 text-xs font-medium text-white shadow-xs transition"
+                        >
+                          Lihat Detail
+                          <ArrowRight size={13} />
+                        </Link>
+                      </div>
                     </div>
                   </div>
                 </div>
-              </div>
               );
             })}
           </div>

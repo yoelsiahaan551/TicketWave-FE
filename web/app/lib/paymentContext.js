@@ -6,6 +6,7 @@ export function savePaymentReturnContext({
   return_path = null,
   owner_user_id = null,
   owner_email = null,
+  is_guest = false,
 }) {
   if (typeof window === "undefined" || typeof booking_code !== "string") return;
   const cleanCode = booking_code.trim().toUpperCase();
@@ -23,6 +24,7 @@ export function savePaymentReturnContext({
       typeof owner_email === "string" && owner_email.trim()
         ? owner_email.trim().toLowerCase()
         : null,
+    is_guest: Boolean(is_guest),
   };
 
   const serialized = JSON.stringify(contextPayload);
@@ -96,7 +98,7 @@ export function isBookingOwnedByUser(booking, user) {
   return userEmail === buyerEmail;
 }
 
-export function isPendingSessionExpired(booking) {
+export function isPendingSessionExpired(booking, nowMs = Date.now()) {
   if (!booking || booking.status !== "pending_payment" || typeof booking.expired_at !== "string") {
     return false;
   }
@@ -104,7 +106,7 @@ export function isPendingSessionExpired(booking) {
   const normalized = /Z$|[+-]\d{2}:?\d{2}$/.test(trimmed) ? trimmed : `${trimmed}Z`;
   const expiresAtMs = Date.parse(normalized);
   if (!Number.isFinite(expiresAtMs)) return false;
-  return Date.now() > expiresAtMs;
+  return nowMs > expiresAtMs;
 }
 
 export function normalizeUtcIso(rawIso) {

@@ -156,6 +156,10 @@ export default function CheckoutPage() {
 
   const items = Array.isArray(data?.items) ? data.items : [];
   const total = items.reduce((acc, i) => acc + i.harga * i.jumlah, 0);
+  const diskonFase = items.reduce(
+    (acc, i) => acc + Math.max(0, (i.base_price ?? i.harga) - i.harga) * i.jumlah,
+    0
+  );
   const totalTiket = items.reduce((acc, i) => acc + i.jumlah, 0);
 
   const trimmedName = buyerName.trim();
@@ -318,6 +322,7 @@ export default function CheckoutPage() {
 
         saveBookingEntry({
           booking_code: bookingObj.booking_code,
+          guest_token: res.data.guest_access_token || null,
           payment_url: rawPaymentUrl,
           recipient_email:
             trimmedRecipientEmail ||
@@ -345,6 +350,7 @@ export default function CheckoutPage() {
             return_path: `/user/pesanan/${encodeURIComponent(bookingObj.booking_code)}?payment_return=1`,
             owner_user_id: user?.id ?? null,
             owner_email: user?.email || trimmedEmail,
+            is_guest: !isAuthenticated,
           });
           window.location.assign(officialPaymentUrl);
           return;
@@ -615,7 +621,7 @@ export default function CheckoutPage() {
 
         {/* Kanan: 5. Ringkasan Pembayaran -> 6. Tombol Lanjut ke Pembayaran */}
         <div className="h-fit space-y-4 lg:sticky lg:top-28">
-          <CheckoutSummary items={items} total={total} />
+          <CheckoutSummary items={items} diskon={diskonFase} total={total} />
 
           {!isPaymentMethodSelected && !createdBooking && (
             <p className="rounded-xl border border-amber-200/80 bg-amber-50/70 px-3.5 py-2.5 text-xs text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-300">

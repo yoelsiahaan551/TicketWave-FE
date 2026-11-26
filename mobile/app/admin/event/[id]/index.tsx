@@ -30,6 +30,10 @@ import {
 } from '@/src/api/endpoints';
 import { EventItem, EventStatus } from '@/src/types';
 import { formatEventSchedule, formatRupiah } from '@/src/utils/formatters';
+import {
+  getMediaPickerErrorMessage,
+  validateAdminMediaAsset,
+} from '@/src/utils/mediaValidation';
 import { Header } from '@/src/components/common/Header';
 import { Badge } from '@/src/components/common/Badge';
 import { Button } from '@/src/components/common/Button';
@@ -109,22 +113,44 @@ export default function AdminEventDetailScreen() {
       return;
     }
 
-    const picked = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ['images'],
-      quality: 0.8,
-    });
+    let picked: ImagePicker.ImagePickerResult;
+    try {
+      picked = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images'],
+        quality: 0.8,
+      });
+    } catch (err) {
+      const msg = `${type === 'poster' ? 'Poster' : 'Banner'}: ${getMediaPickerErrorMessage(err)}`;
+      setFeedback({ type: 'error', text: msg });
+      if (Platform.OS !== 'web') Alert.alert('Format / Ukuran Tidak Valid', msg);
+      return;
+    }
 
-    if (picked.canceled || !picked.assets?.[0]?.uri) return;
+    if (picked.canceled || !picked.assets?.[0]) return;
+
+    const asset = picked.assets[0] as any;
+    const validation = validateAdminMediaAsset({
+      fileName: asset.fileName ?? asset.file?.name,
+      mimeType: asset.mimeType ?? asset.file?.type,
+      fileSize: asset.fileSize ?? asset.file?.size,
+      uri: asset.uri,
+    });
+    if (!validation.valid) {
+      const msg = `${type === 'poster' ? 'Poster' : 'Banner'}: ${validation.error}`;
+      setFeedback({ type: 'error', text: msg });
+      if (Platform.OS !== 'web') Alert.alert('Format / Ukuran Tidak Valid', msg);
+      return;
+    }
 
     setUploading(true);
     try {
-      await uploadEventMedia(id, type, picked.assets[0].uri);
+      await uploadEventMedia(id, type, asset.uri);
       const msg = `${type === 'poster' ? 'Poster' : 'Banner'} berhasil diunggah.`;
       setFeedback({ type: 'success', text: msg });
       if (Platform.OS !== 'web') Alert.alert('Sukses', msg);
       await refreshDetail();
     } catch (err: any) {
-      const msg = `Gagal mengunggah ${type} (ISSUE-03 Cloudinary Backend): ${err?.message || 'HTTP 500'}`;
+      const msg = `Gagal mengunggah ${type}: ${err?.message || 'Gagal memproses media.'}`;
       setFeedback({ type: 'error', text: msg });
       if (Platform.OS !== 'web') Alert.alert('Gagal Upload', msg);
     } finally {
@@ -290,7 +316,7 @@ export default function AdminEventDetailScreen() {
             <Badge label={event.event_type} variant="purple" />
           </View>
           <Text style={[Typography.h2, styles.evName, { color: colors.text }]}>{event.name}</Text>
-          {event.artist_name && (
+          {Boolean(event.artist_name) && (
             <Text style={[Typography.body, styles.artistText, { color: brand.primary, fontWeight: '700' }]}>
               {event.artist_name}
             </Text>
@@ -308,18 +334,63 @@ export default function AdminEventDetailScreen() {
               {event.venue}, {event.city}
             </Text>
           </View>
-          {event.agency?.name && (
+          {Boolean(event.agency?.name) && (
             <View style={styles.metaRow}>
               <Building2 size={15} color={colors.textMuted} />
               <Text style={[Typography.caption, styles.metaText, { color: colors.textSecondary }]}>
-                Promotor: {event.agency.name}
+                Promotor: {event.agency?.name}
               </Text>
             </View>
           )}
-          {event.description && (
+          {Boolean(event.description) && (
             <Text style={[Typography.caption, { color: colors.textSecondary, marginTop: 8, lineHeight: 18 }]}>
               {event.description}
             </Text>
+          )}
+        </View>
+
+        {/* Poster Acara (Uncropped Portrait / Landscape) */}
+        <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+          <Text style={[Typography.h4, { color: colors.text, fontWeight: '700' }]}>
+            Poster Acara
+          </Text>
+          <Text style={[Typography.caption, { color: colors.textMuted, marginTop: 2, marginBottom: 12 }]}>
+            Poster tampil utuh tanpa crop, termasuk rasio potret.
+          </Text>
+          {event.poster_url ? (
+            <View
+              style={{
+                borderRadius: 16,
+                borderWidth: 1,
+                borderColor: colors.border,
+                backgroundColor: colors.surfaceElevated,
+                padding: 10,
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}
+            >
+              <Image
+                source={{ uri: event.poster_url }}
+                style={{ width: '100%', height: 280, borderRadius: 10 }}
+                resizeMode="contain"
+              />
+            </View>
+          ) : (
+            <View
+              style={{
+                borderRadius: 16,
+                borderWidth: 1,
+                borderStyle: 'dashed',
+                borderColor: colors.border,
+                backgroundColor: colors.surfaceElevated,
+                padding: 20,
+                alignItems: 'center',
+              }}
+            >
+              <Text style={[Typography.caption, { color: colors.textMuted, textAlign: 'center' }]}>
+                Belum ada poster acara. Gunakan tombol Upload Poster atau Edit Event untuk menambahkan.
+              </Text>
+            </View>
           )}
         </View>
 

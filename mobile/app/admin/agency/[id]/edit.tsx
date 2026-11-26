@@ -19,6 +19,10 @@ import {
   updateAdminAgency,
   uploadAgencyLogo,
 } from '@/src/api/endpoints';
+import {
+  getMediaPickerErrorMessage,
+  validateAdminMediaAsset,
+} from '@/src/utils/mediaValidation';
 import { Header } from '@/src/components/common/Header';
 import { Input } from '@/src/components/common/Input';
 import { Button } from '@/src/components/common/Button';
@@ -40,6 +44,7 @@ export default function AdminEditAgencyScreen() {
   const [address, setAddress] = useState('');
   const [logoUrl, setLogoUrl] = useState<string | null>(null);
   const [newLogoUri, setNewLogoUri] = useState<string | null>(null);
+  const [logoError, setLogoError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [warning, setWarning] = useState<string | null>(null);
 
@@ -66,12 +71,28 @@ export default function AdminEditAgencyScreen() {
       Alert.alert('Izin Galeri', 'Aplikasi memerlukan izin untuk memilih foto logo.');
       return;
     }
-    const res = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ['images'],
-      quality: 0.8,
-    });
-    if (!res.canceled && res.assets?.[0]?.uri) {
-      setNewLogoUri(res.assets[0].uri);
+    try {
+      const res = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images'],
+        quality: 0.8,
+      });
+      if (!res.canceled && res.assets?.[0]) {
+        const asset = res.assets[0] as any;
+        const check = validateAdminMediaAsset({
+          fileName: asset.fileName ?? asset.file?.name,
+          mimeType: asset.mimeType ?? asset.file?.type,
+          fileSize: asset.fileSize ?? asset.file?.size,
+          uri: asset.uri,
+        });
+        if (!check.valid) {
+          setLogoError(check.error);
+          return;
+        }
+        setLogoError(null);
+        if (asset.uri) setNewLogoUri(asset.uri);
+      }
+    } catch (err) {
+      setLogoError(getMediaPickerErrorMessage(err));
     }
   };
 
@@ -96,7 +117,7 @@ export default function AdminEditAgencyScreen() {
           if (uploadRes.data?.logo_url) setLogoUrl(uploadRes.data.logo_url);
           setNewLogoUri(null);
         } catch (uploadErr: any) {
-          const warnMsg = `Data agency tersimpan, namun unggah logo gagal karena layanan media backend (ISSUE-03): ${uploadErr?.message || 'HTTP 500'}.`;
+          const warnMsg = `Data agency tersimpan, namun unggah logo gagal: ${uploadErr?.message || 'Gagal mengunggah media'}.`;
           setWarning(warnMsg);
           if (Platform.OS !== 'web') {
             Alert.alert('Data Tersimpan (Logo Gagal)', warnMsg);
@@ -171,6 +192,11 @@ export default function AdminEditAgencyScreen() {
                 icon={<Upload size={14} color={colors.text} />}
               />
             </View>
+            {logoError ? (
+              <Text style={[Typography.caption, { color: brand.danger, marginBottom: 12, fontWeight: '600' }]}>
+                {logoError}
+              </Text>
+            ) : null}
 
             <Input label="Nama Agency" value={name} onChangeText={setName} />
             <Input label="Nama PIC" value={picName} onChangeText={setPicName} />

@@ -13,8 +13,11 @@ import {
   BarcodeScanningResult,
   CameraType,
   CameraView,
+  scanFromURLAsync,
   useCameraPermissions,
 } from 'expo-camera';
+import * as ImagePicker from 'expo-image-picker';
+import jsQR from 'jsqr';
 import {
   AlertTriangle,
   Camera,
@@ -29,6 +32,7 @@ import {
   ShieldCheck,
   SwitchCamera,
   Ticket,
+  Upload,
   Volume2,
   VolumeX,
 } from 'lucide-react-native';
@@ -66,6 +70,8 @@ export default function OfficerScanScreen() {
   // Input & validation state
   const [inputCode, setInputCode] = useState('');
   const [validating, setValidating] = useState(false);
+  const [decodingFile, setDecodingFile] = useState(false);
+  const [fileScanError, setFileScanError] = useState<string | null>(null);
   const [submittingCheckIn, setSubmittingCheckIn] = useState(false);
   const [result, setResult] = useState<any | null>(null);
   const [recentScans, setRecentScans] = useState<any[]>([]);
@@ -159,6 +165,100 @@ export default function OfficerScanScreen() {
     setResult(null);
     setInputCode('');
     setInlineNotice(null);
+    setFileScanError(null);
+  };
+
+  const decodeQrFromImageUri = useCallback(async (uri: string): Promise<string | null> => {
+    if (Platform.OS === 'web') {
+      if (typeof window === 'undefined' || typeof document === 'undefined') return null;
+      return await new Promise<string | null>((resolve) => {
+        const ImgCtor = (window as any).Image;
+        if (!ImgCtor) {
+          resolve(null);
+          return;
+        }
+        const img = new ImgCtor();
+        img.crossOrigin = 'anonymous';
+        img.onload = () => {
+          try {
+            const natW = img.naturalWidth || img.width || 0;
+            const natH = img.naturalHeight || img.height || 0;
+            if (!natW || !natH) {
+              resolve(null);
+              return;
+            }
+            const maxDim = 1600;
+            const scale = Math.min(1, maxDim / Math.max(natW, natH));
+            const width = Math.max(1, Math.round(natW * scale));
+            const height = Math.max(1, Math.round(natH * scale));
+            const canvas = document.createElement('canvas');
+            canvas.width = width;
+            canvas.height = height;
+            const ctx = canvas.getContext('2d');
+            if (!ctx) {
+              resolve(null);
+              return;
+            }
+            ctx.fillStyle = '#FFFFFF';
+            ctx.fillRect(0, 0, width, height);
+            ctx.drawImage(img, 0, 0, width, height);
+            const imageData = ctx.getImageData(0, 0, width, height);
+            const decoded = jsQR(imageData.data, width, height, {
+              inversionAttempts: 'attemptBoth',
+            });
+            resolve(decoded?.data ? decoded.data.trim() : null);
+          } catch {
+            resolve(null);
+          }
+        };
+        img.onerror = () => resolve(null);
+        img.src = uri;
+      });
+    }
+
+    const scanned = await scanFromURLAsync(uri, ['qr']);
+    const first = Array.isArray(scanned) ? scanned[0] : null;
+    return typeof first?.data === 'string' && first.data.trim() ? first.data.trim() : null;
+  }, []);
+
+  const handleScanImageFile = async () => {
+    if (decodingFile || validating) return;
+    setFileScanError(null);
+
+    try {
+      if (Platform.OS !== 'web') {
+        const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+        if (!perm.granted) {
+          setFileScanError('Izin akses galeri diperlukan untuk memindai gambar QR.');
+          return;
+        }
+      }
+
+      const picked = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images'],
+        quality: 1,
+      });
+
+      if (picked.canceled || !picked.assets?.[0]?.uri) return;
+
+      setDecodingFile(true);
+      const decodedText = await decodeQrFromImageUri(picked.assets[0].uri);
+      if (!decodedText) {
+        setFileScanError(
+          'QR tidak terbaca dari gambar tersebut. Pastikan gambar QR TicketWave utuh dan kontras jelas.'
+        );
+        return;
+      }
+
+      setInputCode(decodedText);
+      await handleValidate(decodedText);
+    } catch {
+      setFileScanError(
+        'QR tidak terbaca dari gambar tersebut. Pastikan gambar QR TicketWave utuh dan kontras jelas.'
+      );
+    } finally {
+      setDecodingFile(false);
+    }
   };
 
   const performCheckIn = async () => {
@@ -389,6 +489,43 @@ export default function OfficerScanScreen() {
               </View>
             </View>
           )}
+        </View>
+
+        {/* QR Image Upload Fallback (Web & Native) */}
+        <View style={[styles.inputCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+          <Text style={[Typography.h4, styles.inputTitle, { color: colors.text }]}>
+            Pindai Gambar QR dari Perangkat
+          </Text>
+          <Text style={[Typography.caption, styles.inputSub, { color: colors.textSecondary }]}>
+            Unggah tangkapan layar atau foto QR e-ticket untuk validasi read-only sebelum check-in
+          </Text>
+
+          <Button
+            title={decodingFile ? 'Membaca Gambar QR...' : 'Pilih & Pindai Gambar QR'}
+            onPress={handleScanImageFile}
+            loading={decodingFile}
+            disabled={validating || decodingFile}
+            variant="secondary"
+            size="md"
+            icon={<Upload size={16} color={colors.text} />}
+          />
+
+          {fileScanError ? (
+            <View
+              style={[
+                styles.inlineNoticeBox,
+                {
+                  backgroundColor: brand.dangerSoft,
+                  borderColor: brand.danger,
+                  marginTop: 10,
+                },
+              ]}
+            >
+              <Text style={{ fontSize: 12, fontWeight: '700', color: brand.danger }}>
+                {fileScanError}
+              </Text>
+            </View>
+          ) : null}
         </View>
 
         {/* Manual Code Input Box (Fallback) */}

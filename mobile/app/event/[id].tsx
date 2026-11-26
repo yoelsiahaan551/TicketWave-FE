@@ -155,10 +155,15 @@ export default function EventDetailScreen() {
       daysCount: event?.days_count,
       ticketName: selectedTicket.name,
       unitPrice: getEffectivePrice(selectedTicket),
+      basePrice: Number(selectedTicket.base_price ?? getEffectivePrice(selectedTicket)),
+      discountPercent: selectedTicket.active_phase?.discount_percent ?? 0,
+      activePhaseName: selectedTicket.active_phase?.phase_name ?? null,
       posterUrl: event?.poster_url || event?.banner_url,
       venue: event?.venue,
       city: event?.city,
       eventDate: event?.event_date,
+      eventTime: event?.event_time,
+      eventEndTime: event?.event_end_time,
     });
 
     router.push({
@@ -292,7 +297,9 @@ export default function EventDetailScreen() {
                 <View style={{ flex: 1 }}>
                   <Text style={[styles.infoLabel, { color: colors.textMuted }]}>Waktu</Text>
                   <Text style={[styles.infoVal, { color: colors.text }]}>
-                    {formatWaktu(event.event_time)}
+                    {event.event_end_time
+                      ? `${event.event_time.slice(0, 5)} – ${event.event_end_time.slice(0, 5)} WIB`
+                      : formatWaktu(event.event_time)}
                   </Text>
                 </View>
               </View>

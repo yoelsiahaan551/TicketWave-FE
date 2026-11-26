@@ -15,6 +15,10 @@ import { Building2, Upload } from 'lucide-react-native';
 
 import { useAppTheme } from '@/src/context/ThemeContext';
 import { createAdminAgency, uploadAgencyLogo } from '@/src/api/endpoints';
+import {
+  getMediaPickerErrorMessage,
+  validateAdminMediaAsset,
+} from '@/src/utils/mediaValidation';
 import { Header } from '@/src/components/common/Header';
 import { Input } from '@/src/components/common/Input';
 import { Button } from '@/src/components/common/Button';
@@ -30,6 +34,7 @@ export default function AdminCreateAgencyScreen() {
   const [phone, setPhone] = useState('');
   const [address, setAddress] = useState('');
   const [logoUri, setLogoUri] = useState<string | null>(null);
+  const [logoError, setLogoError] = useState<string | null>(null);
 
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -42,12 +47,28 @@ export default function AdminCreateAgencyScreen() {
       Alert.alert('Izin Galeri', 'Aplikasi memerlukan izin untuk memilih foto logo.');
       return;
     }
-    const res = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ['images'],
-      quality: 0.8,
-    });
-    if (!res.canceled && res.assets?.[0]?.uri) {
-      setLogoUri(res.assets[0].uri);
+    try {
+      const res = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images'],
+        quality: 0.8,
+      });
+      if (!res.canceled && res.assets?.[0]) {
+        const asset = res.assets[0] as any;
+        const check = validateAdminMediaAsset({
+          fileName: asset.fileName ?? asset.file?.name,
+          mimeType: asset.mimeType ?? asset.file?.type,
+          fileSize: asset.fileSize ?? asset.file?.size,
+          uri: asset.uri,
+        });
+        if (!check.valid) {
+          setLogoError(check.error);
+          return;
+        }
+        setLogoError(null);
+        if (asset.uri) setLogoUri(asset.uri);
+      }
+    } catch (err) {
+      setLogoError(getMediaPickerErrorMessage(err));
     }
   };
 
@@ -102,7 +123,7 @@ export default function AdminCreateAgencyScreen() {
           await uploadAgencyLogo(agencyId, logoUri);
           setLogoUri(null);
         } catch (uploadErr: any) {
-          const warnMsg = `Agency "${cleanName}" berhasil dibuat (#${agencyId}), namun unggah logo gagal karena layanan media backend (ISSUE-03): ${uploadErr?.message || 'HTTP 500'}.`;
+          const warnMsg = `Agency "${cleanName}" berhasil dibuat (#${agencyId}), namun unggah logo gagal: ${uploadErr?.message || 'Gagal mengunggah media'}.`;
           setWarning(warnMsg);
           if (Platform.OS !== 'web') {
             Alert.alert('Agency Dibuat (Logo Gagal)', warnMsg, [
@@ -179,6 +200,11 @@ export default function AdminCreateAgencyScreen() {
                 icon={<Upload size={14} color={colors.text} />}
               />
             </View>
+            {logoError ? (
+              <Text style={[Typography.caption, { color: brand.danger, marginBottom: 12, fontWeight: '600' }]}>
+                {logoError}
+              </Text>
+            ) : null}
 
             <Input
               label="Nama Agency *"

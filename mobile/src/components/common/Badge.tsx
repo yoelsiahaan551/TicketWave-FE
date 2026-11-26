@@ -21,8 +21,9 @@ export function Badge({ label, status, variant, style }: BadgeProps) {
       case 'valid':
         return 'success';
       case 'pending_payment':
-      case 'sales_closed':
         return 'warning';
+      case 'sales_closed':
+        return 'neutral';
       case 'cancelled':
       case 'archived':
       case 'dibatalkan':

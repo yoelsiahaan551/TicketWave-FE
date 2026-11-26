@@ -21,7 +21,12 @@ interface TicketCardProps {
 export function TicketCard({ ticket, onShowQR }: TicketCardProps) {
   const { colors, brand } = useAppTheme();
 
-  const isValid = isTicketQrEligible(ticket.booking_status, ticket);
+  const isValid = isTicketQrEligible(ticket.booking_status, ticket, {
+    is_event_ended: ticket.is_event_ended,
+    event_type: ticket.event_type,
+    event_date: ticket.event_date,
+    event_end_time: ticket.event_end_time,
+  });
 
   return (
     <View
